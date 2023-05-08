@@ -1026,8 +1026,6 @@ fn calculate_exchange(
     x / multiple_in
   let new_datum_balance_out =
     ( y + ( dy_fee - dy_admin_fee ) ) / multiple_out
-  let new_value_balance_out =
-    utils.must_parse_option(list.at(value_balances, out_index)) - amount_out
   let new_datum_balances =
     list.indexed_map(
       datum_balances,
@@ -1046,9 +1044,9 @@ fn calculate_exchange(
       value_balances,
       fn(idx, balance) {
         if idx == in_index {
-          new_datum_balance_in
+          balance + amount_in
         } else if idx == out_index {
-          new_value_balance_out
+          balance - amount_out
         } else {
           balance
         }
