@@ -1,62 +1,15 @@
-# stableswap-aiken
+# Minswap Stableswap Contract
 
-Write validators in the `validators` folder, and supporting functions in the `lib` folder using `.ak` as a file extension.
-
-For example, as `validators/always_true.ak`
-
-```gleam
-validator {
-  fn spend(_datum: Data, _redeemer: Data, _context: Data) -> Bool {
-    True
-  }
-}
-```
-
-Validators are named after their purpose, so one of:
-
-- `spent`
-- `mint`
-- `withdraw`
-- `publish`
+## Structure
+- There are 3 mains contract under `validators` folder and utility functions under `lib/stableswap` folder
 
 ## Building
 
-```sh
-aiken build
-```
+- Make sure you have already installed `npm` and `aiken`
+- Run `npm install` to install necessary dependencies 
+- Run `npx ts-node --esm build-plutus.ts` to build scripts. The result is `stableswap-script.json` file
 
 ## Testing
 
-You can write tests in any module using the `test` keyword. For example:
+- Run `aiken check` to run all unit tests of the contract
 
-```gleam
-test foo() {
-  1 + 1 == 2
-}
-```
-
-To run all tests, simply do:
-
-```sh
-aiken check
-```
-
-To run only tests matching the string `foo`, do:
-
-```sh
-aiken check -m foo
-```
-
-## Documentation
-
-If you're writing a library, you might want to generate an HTML documentation for it.
-
-Use:
-
-```sh
-aiken docs
-```
-
-## Resources
-
-Find more on the [Aiken's user manual](https://aiken-lang.org).

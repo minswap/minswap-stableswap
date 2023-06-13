@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-- Minswap Stableswap uses Curve's Stableswap model: https://classic.curve.fi/files/stableswap-paper.pdf. This model aims to provide low slippage and low fees when trading stablecoins. The key metric in this model is Amplification Coefficient (TODO: Do we need to explain how's A work?)
+- Minswap Stableswap uses Curve's Stableswap model: https://classic.curve.fi/files/stableswap-paper.pdf. This model aims to provide low slippage and low fees when trading stablecoins. The key metric in this model is Amplification Coefficient (TODO: Do we need to explain how's A work?). References Curve's contract: https://etherscan.io/address/0xbebc44782c7db0a1a60cb6fe97d0b483032ff1c7#code
 - The Stableswap uses Batching architecture to solve concurrency on Cardano. Each user action will create an "Order" and "Batcher" will look through them and apply them into a "Stable Pool". A valid "Batcher" is a wallet which contains Minswap's License Token. Batching transaction is permissioned and only is triggered by "Batcher".
 - Limitations:
   - Current contract only supports non-ADA assets (i.e. a pool of ADA and ADA-pegged assets wouldn't be supported)
