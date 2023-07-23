@@ -12,8 +12,8 @@ fn do_d_converging(
   let dp =
     list.reduce(
       mul_balances,
-      fn(dpp, mul_balance) { dpp * initial_value / ( mul_balance * n ) },
       initial_value,
+      fn(dpp, mul_balance) { dpp * initial_value / ( mul_balance * n ) },
     )
   let new_d =
     ( ann * sum + dp * n ) * initial_value / (
@@ -27,22 +27,18 @@ fn do_d_converging(
 }
 
 pub fn get_d(mul_balances: List<Int>, amp: Int) -> Int {
-  let sum =
-    utils.sum_ints(mul_balances)
+  let sum = utils.sum_ints(mul_balances)
   if sum == 0 {
     0
   } else {
-    let n =
-      list.length(mul_balances)
-    let ann =
-      amp * n
+    let n = list.length(mul_balances)
+    let ann = amp * n
     do_d_converging(255, sum, mul_balances, sum, n, ann)
   }
 }
 
 pub fn get_d_mem(balances: List<Int>, multiples: List<Int>, amp: Int) -> Int {
-  let mul_balances =
-    utils.zip_with(balances, multiples, fn(b, m) { b * m })
+  let mul_balances = utils.zip_with(balances, multiples, fn(b, m) { b * m })
   get_d(mul_balances, amp)
 }
 
@@ -63,21 +59,18 @@ fn do_get_y_converging(
 }
 
 pub fn get_y(i: Int, j: Int, x: Int, xp: List<Int>, amp: Int) -> Int {
-  let n =
-    list.length(xp)
+  let n = list.length(xp)
   if i == j || i < 0 || j < 0 || i >= n || j >= n {
     error
   } else {
-    let d =
-      get_d(xp, amp)
-    let ann =
-      amp * n
+    let d = get_d(xp, amp)
+    let ann = amp * n
     let (_, s, init_c) =
       list.foldl(
         xp,
+        (0, 0, d),
         fn(y, acc) {
-          let (index, sum, c) =
-            acc
+          let (index, sum, c) = acc
           if index == j {
             (index + 1, sum, c)
           } else {
@@ -90,58 +83,46 @@ pub fn get_y(i: Int, j: Int, x: Int, xp: List<Int>, amp: Int) -> Int {
             (index + 1, sum + temp_x, c * d / ( temp_x * n ))
           }
         },
-        (0, 0, d),
       )
-    let b =
-      s + d / ann
-    let c =
-      init_c * d / ( ann * n )
+    let b = s + d / ann
+    let c = init_c * d / ( ann * n )
     do_get_y_converging(255, d, b, c, d)
   }
 }
 
 test test_get_y() {
-  let y =
-    get_y(0, 1, 1100000, [1000000, 1000000], 2000)
+  let y = get_y(0, 1, 1100000, [1000000, 1000000], 2000)
   y == 900005
 }
 
 test test_get_d() {
-  let d1 =
-    get_d([1000000, 1000000], 2000)
-  let d2 =
-    get_d([9000000, 500000], 2000)
-  let d3 =
-    get_d([0, 0], 2000)
+  let d1 = get_d([1000000, 1000000], 2000)
+  let d2 = get_d([9000000, 500000], 2000)
+  let d3 = get_d([0, 0], 2000)
   d1 == 2000000 && d2 == 9490500 && d3 == 0
 }
 
 pub fn get_y_d(out_index: Int, xp: List<Int>, amp: Int, d: Int) -> Int {
-  let n =
-    list.length(xp)
+  let n = list.length(xp)
   if out_index < 0 || out_index >= n {
     error
   } else {
-    let ann =
-      amp * n
+    let ann = amp * n
     let (_, s, init_c) =
       list.foldl(
         xp,
+        (0, 0, d),
         fn(y, acc) {
-          let (index, sum, c) =
-            acc
+          let (index, sum, c) = acc
           if index == out_index {
             (index + 1, sum, c)
           } else {
             (index + 1, sum + y, c * d / ( y * n ))
           }
         },
-        (0, 0, d),
       )
-    let b =
-      s + d / ann
-    let c =
-      init_c * d / ( ann * n )
+    let b = s + d / ann
+    let c = init_c * d / ( ann * n )
     do_get_y_converging(255, d, b, c, d)
   }
 }
