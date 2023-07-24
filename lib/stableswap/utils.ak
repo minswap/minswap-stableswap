@@ -97,7 +97,7 @@ test test_zip_with() {
   z1 == [5, 7, 9] && z2 == [4, 10, 18]
 }
 
-test test_zip_with_throw_err() {
+test test_zip_with_throw_err() fail {
   let arr1 =
     [1, 2, 3]
   let arr2 =
