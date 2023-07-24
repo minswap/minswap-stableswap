@@ -60,34 +60,31 @@ fn do_get_y_converging(
 
 pub fn get_y(i: Int, j: Int, x: Int, xp: List<Int>, amp: Int) -> Int {
   let n = list.length(xp)
-  if i == j || i < 0 || j < 0 || i >= n || j >= n {
-    error
-  } else {
-    let d = get_d(xp, amp)
-    let ann = amp * n
-    let (_, s, init_c) =
-      list.foldl(
-        xp,
-        (0, 0, d),
-        fn(y, acc) {
-          let (index, sum, c) = acc
-          if index == j {
-            (index + 1, sum, c)
-          } else {
-            let temp_x =
-              if index == i {
-                x
-              } else {
-                y
-              }
-            (index + 1, sum + temp_x, c * d / ( temp_x * n ))
-          }
-        },
-      )
-    let b = s + d / ann
-    let c = init_c * d / ( ann * n )
-    do_get_y_converging(255, d, b, c, d)
-  }
+  expect i != j && i >= 0 && j >= 0 && i < n && j < n
+  let d = get_d(xp, amp)
+  let ann = amp * n
+  let (_, s, init_c) =
+    list.foldl(
+      xp,
+      (0, 0, d),
+      fn(y, acc) {
+        let (index, sum, c) = acc
+        if index == j {
+          (index + 1, sum, c)
+        } else {
+          let temp_x =
+            if index == i {
+              x
+            } else {
+              y
+            }
+          (index + 1, sum + temp_x, c * d / ( temp_x * n ))
+        }
+      },
+    )
+  let b = s + d / ann
+  let c = init_c * d / ( ann * n )
+  do_get_y_converging(255, d, b, c, d)
 }
 
 test test_get_y() {
@@ -104,27 +101,24 @@ test test_get_d() {
 
 pub fn get_y_d(out_index: Int, xp: List<Int>, amp: Int, d: Int) -> Int {
   let n = list.length(xp)
-  if out_index < 0 || out_index >= n {
-    error
-  } else {
-    let ann = amp * n
-    let (_, s, init_c) =
-      list.foldl(
-        xp,
-        (0, 0, d),
-        fn(y, acc) {
-          let (index, sum, c) = acc
-          if index == out_index {
-            (index + 1, sum, c)
-          } else {
-            (index + 1, sum + y, c * d / ( y * n ))
-          }
-        },
-      )
-    let b = s + d / ann
-    let c = init_c * d / ( ann * n )
-    do_get_y_converging(255, d, b, c, d)
-  }
+  expect out_index >= 0 && out_index < n
+  let ann = amp * n
+  let (_, s, init_c) =
+    list.foldl(
+      xp,
+      (0, 0, d),
+      fn(y, acc) {
+        let (index, sum, c) = acc
+        if index == out_index {
+          (index + 1, sum, c)
+        } else {
+          (index + 1, sum + y, c * d / ( y * n ))
+        }
+      },
+    )
+  let b = s + d / ann
+  let c = init_c * d / ( ann * n )
+  do_get_y_converging(255, d, b, c, d)
 }
 
 test test_get_y_d() {

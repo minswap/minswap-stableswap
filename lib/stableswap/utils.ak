@@ -47,7 +47,7 @@ pub fn do_bytearray_to_int(
     if idx == 0 && byte == minus_ascii_code {
       do_bytearray_to_int(byte_arr, idx + 1, acc, byte_len) * -1
     } else if byte < zero_ascii_code || byte > zero_ascii_code + 9 {
-      error
+      fail
     } else {
       do_bytearray_to_int(
         byte_arr,
@@ -75,7 +75,7 @@ pub fn zip_with(
       when arr2 is {
         [] ->
           []
-        _ -> error
+        _ -> fail
       }
     [x, ..xs] ->
       when arr2 is {
