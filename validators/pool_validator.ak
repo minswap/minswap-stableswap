@@ -6,7 +6,9 @@ use aiken/transaction.{
   DatumHash, InlineDatum, Input, NoDatum, Output, ScriptContext, Spend,
   Transaction, ValidityRange,
 }
-use aiken/transaction/credential.{Address, VerificationKeyCredential}
+use aiken/transaction/credential.{
+  Address, ScriptCredential, VerificationKeyCredential,
+}
 use aiken/transaction/value.{PolicyId, Value}
 use stableswap/pool_utils as poolutils
 use stableswap/types.{
@@ -29,30 +31,30 @@ validator(params: PoolParams) {
     when redeemer is {
       ApplyPool(batcher_address, input_indexes, license_idx) ->
         validate_apply_pool(
-          params,
-          transaction,
-          pool_input,
-          datum,
-          batcher_address,
-          input_indexes,
-          license_idx,
+          params: params,
+          transaction: transaction,
+          pool_input: pool_input,
+          pool_in_datum: datum,
+          batcher_address: batcher_address,
+          input_indexes: input_indexes,
+          license_idx: license_idx,
         )
       WithdrawAdminFee(admin_index, fee_to_index) ->
         validate_withdraw_admin_fee(
-          params,
-          transaction,
-          pool_input,
-          datum,
-          admin_index,
-          fee_to_index,
+          params: params,
+          transaction: transaction,
+          pool_input: pool_input,
+          pool_in_datum: datum,
+          admin_index: admin_index,
+          fee_to_index: fee_to_index,
         )
       UpdateAmpOrStakeCredential(admin_index) ->
         validate_update_amp_or_update_stake_credential(
-          params,
-          transaction,
-          pool_input,
-          datum,
-          admin_index,
+          params: params,
+          transaction: transaction,
+          pool_input: pool_input,
+          pool_in_datum: datum,
+          admin_index: admin_index,
         )
     }
   }
@@ -89,10 +91,7 @@ fn validate_apply_pool(
     maximum_deadline_range,
     ..
   } = params
-  let Input {
-    output_reference: pool_in_output_reference,
-    output: pool_in_output,
-  } = pool_input
+  let Input { output: pool_in_output, .. } = pool_input
   let Output { address: pool_in_address, value: pool_in_value, .. } =
     pool_in_output
   let Address { payment_credential: pool_in_address_payment_credential, .. } =
@@ -111,18 +110,18 @@ fn validate_apply_pool(
       },
     )
   let Output { value: pool_out_value, .. } = pool_output
-  let has_one_pool_input =
-    list.length(
-      list.filter(
-        inputs,
-        fn(i) {
-          let Input { output: out, .. } = i
-          let Output { address: addr, .. } = out
-          let Address { payment_credential, .. } = addr
-          payment_credential == pool_in_address_payment_credential
-        },
-      ),
-    ) == 1
+
+  // Batching transaction only allow 1 Pool UTxO in the Inputs
+  expect [_] =
+    list.filter(
+      inputs,
+      fn(i) {
+        let Input { output: out, .. } = i
+        let Output { address: addr, .. } = out
+        let Address { payment_credential, .. } = addr
+        payment_credential == pool_in_address_payment_credential
+      },
+    )
 
   expect pool_out_datum: PoolDatum =
     must_find_script_datum(outputs, datums, pool_output)
@@ -130,26 +129,33 @@ fn validate_apply_pool(
     balances: pool_out_balances,
     total_liquidity: pool_out_total_liquidity,
     amp: pool_out_amp,
+    order_hash: pool_out_order_hash,
   } = pool_out_datum
 
   let PoolDatum {
     balances: pool_in_balances,
     total_liquidity: pool_in_total_liquidity,
     amp: pool_in_amp,
+    order_hash: pool_in_order_hash,
   } = pool_in_datum
 
   // - Pool NFT is the part of Pool Value, which is known as Pool Identifier
   // - Pool NFT must be existed on both Pool In/Output Value
   let Asset { policy_id: nft_policy_id, asset_name: nft_asset_name } = nft_asset
-  let has_nft_asset_in_input =
+
+  // Pool NFT must be existed in Pool Input and Output value
+  expect True =
     value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1
-  let has_nft_asset_in_output =
+  expect True =
     value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1
-  let is_valid_pool_value = check_pool_value(pool_out_value, assets)
+
+  // Pool Value must only contains necessary token inside
+  expect True = check_pool_value(pool_out_value, assets)
 
   // In @ApplyPool Redeemer, only balances and total_liquidity can be changed.
-  // The Amplification Coeffience must be unchanged, it can only be update via @UpdateAmp redeemer
-  let is_valid_pool_datum = pool_in_amp == pool_out_amp
+  // The Amplification Coeffience & Order Hash must be unchanged. Amplification Coeffience can only be update via @UpdateAmp redeemer
+  expect True =
+    pool_in_amp == pool_out_amp && pool_in_order_hash == pool_out_order_hash
   let license_input = utils.must_parse_option(list.at(inputs, license_idx))
   let license_deadline =
     find_license_deadline(license_symbol, license_input.output.value)
@@ -162,15 +168,21 @@ fn validate_apply_pool(
   let Address { payment_credential: batcher_payment_credential, .. } =
     batcher_address
   expect VerificationKeyCredential(batcher_pkh) = batcher_payment_credential
-  let is_valid_batcher =
+  // Batcher with valid license token must be a signer of transaction
+  expect True =
     list.has(extra_signatories, batcher_pkh) && license_deadline >= end_valid_time_range && license_deadline <= start_valid_time_range + maximum_deadline_range
+
   let user_inputs =
     list.filter(
       inputs,
       fn(input) {
-        let Input { output_reference: out_ref, output: out } = input
+        let Input { output: out, .. } = input
         let Output { address: addr, .. } = out
-        out_ref != pool_in_output_reference && addr != batcher_address
+        let Address { payment_credential: payment_cred, .. } = addr
+        when payment_cred is {
+          ScriptCredential(hash) -> hash == pool_in_order_hash
+          _ -> False
+        }
       },
     )
 
@@ -211,60 +223,47 @@ fn validate_apply_pool(
       },
     )
   let assets_length = list.length(assets)
-  let is_valid_balances_length =
+  // Balances list in Pool In/Out datum must have the same length with Pool Assets list
+  expect True =
     assets_length == list.length(pool_in_balances) && assets_length == list.length(
       pool_out_balances,
     )
-
+  expect True = list.length(sorted_users_inputs) == list.length(user_outputs)
   let (new_datum_balances, new_value_balances, new_total_liquidity) =
     apply_orders(
-      outputs,
-      datums,
-      sorted_users_inputs,
-      user_outputs,
-      assets,
-      multiples,
-      lp_asset,
-      pool_in_amp,
-      fee,
-      admin_fee,
-      fee_denominator,
-      (pool_in_balances, value_balances_in, pool_in_total_liquidity),
+      all_outputs: outputs,
+      datum_dict: datums,
+      user_inputs: sorted_users_inputs,
+      user_outputs: user_outputs,
+      assets: assets,
+      multiples: multiples,
+      lp_asset: lp_asset,
+      amp: pool_in_amp,
+      fee: fee,
+      admin_fee: admin_fee,
+      fee_denominator: fee_denominator,
+      pool_state: (pool_in_balances, value_balances_in, pool_in_total_liquidity),
     )
-  let is_apply_orders_success =
+
+  // Validate the Pool State (datum balances, value balances and total_liquidity) must be the same with the calculated amount after applying through all orders
+  expect True =
     value_balances_out == new_value_balances && pool_out_balances == new_datum_balances && pool_out_total_liquidity == new_total_liquidity
   let mint_value = value.from_minted_value(mint)
   let mint_length = list.length(value.flatten(mint_value))
   let total_delta_liquidity = pool_out_total_liquidity - pool_in_total_liquidity
-  let is_valid_mint_length =
+  let Asset { policy_id: lp_policy_id, asset_name: lp_asset_name } = lp_asset
+
+  // Validate that @mint can only contains LP Token if having any order requires minting LP, otherwise, it must be empty
+  expect True =
     if total_delta_liquidity != 0 {
       mint_length == 1
     } else {
       mint_length == 0
     }
-  let Asset { policy_id: lp_policy_id, asset_name: lp_asset_name } = lp_asset
-  let is_valid_mint =
+  expect True =
     value.quantity_of(mint_value, lp_policy_id, lp_asset_name) == total_delta_liquidity
 
-  // (1)       -> Having only one Pool Input in the transaction
-  // (3), (4)  -> Pool NFT must be existed in Pool Input and Output value
-  // (5)       -> Pool Value must only contains necessary token inside
-  // (6)       -> Batcher with valid license token must be a signer of transaction
-  // (7)       -> Irrelevant fields in Pool datum must be unchanged
-  // (8)       -> Validate the Pool State (datum balances, value balances and total_liquidity) must be the same with the calculated amount after applying through all orders
-  // (9), (10) -> Validate that @mint can only contains LP Token if having any order requires minting LP, otherwise, it must be empty
-  // (11)      -> Balances list in Pool In/Out datum must have the same length with Pool Assets list
-  has_one_pool_input && // (1) 
-  has_nft_asset_in_input && // (3)
-  has_nft_asset_in_output && // (4)
-  is_valid_pool_value && // (5)
-  is_valid_batcher && // (6)
-  is_valid_pool_datum && // (7)
-  is_apply_orders_success && // (8)
-  is_valid_mint_length && // (9)
-  is_valid_mint && // (10)
-  is_valid_balances_length
-  // (11)
+  True
 }
 
 // This function will trigger validation of WithdrawAdminFee redeemer
@@ -291,18 +290,29 @@ fn validate_withdraw_admin_fee(
   expect [pool_output] =
     list.filter(outputs, fn(o) { o.address == pool_in_address })
   let Output { value: pool_out_value, .. } = pool_output
-  let has_one_pool_input =
-    list.length(
-      list.filter(
-        inputs,
-        fn(i) {
-          let Input { output: out, .. } = i
-          let Output { address: addr, .. } = out
-          let Address { payment_credential, .. } = addr
-          payment_credential == pool_in_address_payment_credential
-        },
-      ),
-    ) == 1
+
+  // Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
+  expect [_] =
+    list.filter(
+      inputs,
+      fn(i) {
+        let Input { output: out, .. } = i
+        let Output { address: addr, .. } = out
+        let Address { payment_credential, .. } = addr
+        payment_credential == pool_in_address_payment_credential
+      },
+    )
+  expect [_] =
+    list.filter(
+      inputs,
+      fn(i) {
+        let Input { output: Output { datum, .. }, .. } = i
+        when datum is {
+          NoDatum -> False
+          _ -> True
+        }
+      },
+    )
 
   expect pool_out_datum: PoolDatum =
     must_find_script_datum(outputs, datums, pool_output)
@@ -312,14 +322,19 @@ fn validate_withdraw_admin_fee(
   // - Pool NFT is the part of Pool Value, which is known as Pool Identifier
   // - Pool NFT must be existed on both Pool In/Output Value
   let Asset { policy_id: nft_policy_id, asset_name: nft_asset_name } = nft_asset
-  let has_nft_asset_in_input =
+
+  // Pool NFT must be existed in Pool Input and Output value
+  expect True =
     value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1
-  let has_nft_asset_in_output =
+  expect True =
     value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1
-  let is_valid_pool_value = check_pool_value(pool_out_value, assets)
+
+  // Pool Value must only contains necessary token inside
+  expect True = check_pool_value(pool_out_value, assets)
 
   // Pool Datum must be unchanged in this redeemer
-  let is_valid_pool_datum = pool_in_datum == pool_out_datum
+  expect True = pool_in_datum == pool_out_datum
+
   let value_balances_in =
     list.map(
       assets,
@@ -336,6 +351,8 @@ fn validate_withdraw_admin_fee(
         value.quantity_of(pool_out_value, policy_id, asset_name)
       },
     )
+  // After Admin Fee amounts are withdrawn, Pool Value must be equals with Datum balances
+  expect True = value_balances_out == pool_in_balances
 
   // - Admin Fee amounts are the amounts belonged to Admin 
   // - These amounts are accumulated in Pool Value and 
@@ -355,47 +372,22 @@ fn validate_withdraw_admin_fee(
         value.quantity_of(fee_to_output.value, policy_id, asset_name)
       },
     )
+  // Admin can only withdraw the exact accumulated admin fee amounts
+  expect True = withdrawal_amounts == admin_fee_amounts
+
   let admin_input = utils.must_parse_option(list.at(inputs, admin_index))
   let admin_value = admin_input.output.value
   let Asset { policy_id: admin_policy_id, asset_name: admin_asset_name } =
     admin_asset
-  let has_admin =
+
+  // Only Admin token can trigger this redeemer
+  expect True =
     value.quantity_of(admin_value, admin_policy_id, admin_asset_name) == 1
   let mint_value = value.from_minted_value(mint)
-  let is_mint_nothing = list.length(value.flatten(mint_value)) == 0
-  let has_one_script_in_input =
-    list.length(
-      list.filter(
-        inputs,
-        fn(i) {
-          let Input { output: Output { datum, .. }, .. } = i
-          when datum is {
-            NoDatum -> False
-            _ -> True
-          }
-        },
-      ),
-    ) == 1
-  // (1), (2)  -> Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
-  //              The `expect [pool_output]` above has already validated Pool Output part
-  // (3), (4)  -> Pool NFT must be existed in Pool Input and Output value
-  // (5)       -> Pool Value must only contains necessary token inside
-  // (6)       -> This Redeemer won't mint anything 
-  // (7)       -> Pool Datum must be unchanged in this redeemer
-  // (8)       -> Only Admin token can trigger this redeemer
-  // (9)       -> Admin can only withdraw the exact accumulated admin fee amounts
-  // (10)      ->  After Admin Fee amounts are withdrawn, Pool Value must be equals with Datum balances
-  has_one_pool_input && // (1)
-  has_one_script_in_input && // (2)
-  has_nft_asset_in_input && // (3)
-  has_nft_asset_in_output && // (4)
-  is_valid_pool_value && // (5)
-  is_mint_nothing && // (6)
-  is_valid_pool_datum && // (7) 
-  has_admin && // (8)
-  withdrawal_amounts == admin_fee_amounts && // (9)
-  value_balances_out == pool_in_datum.balances
-  // ^ (10)
+  // This Redeemer won't mint anything 
+  expect [] = value.flatten(mint_value)
+
+  True
 }
 
 // This function will trigger validation of UpdateAmpOrStakeCredential redeemer
@@ -428,46 +420,63 @@ fn validate_update_amp_or_update_stake_credential(
       },
     )
   let Output { value: pool_out_value, .. } = pool_output
-  let has_one_pool_input =
-    list.length(
-      list.filter(
-        inputs,
-        fn(i) {
-          let Input { output: out, .. } = i
-          let Output { address: addr, .. } = out
-          let Address { payment_credential, .. } = addr
-          payment_credential == pool_in_address_payment_credential
-        },
-      ),
-    ) == 1
+
+  // Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
+  expect [_] =
+    list.filter(
+      inputs,
+      fn(i) {
+        let Input { output: out, .. } = i
+        let Output { address: addr, .. } = out
+        let Address { payment_credential, .. } = addr
+        payment_credential == pool_in_address_payment_credential
+      },
+    )
+  expect [_] =
+    list.filter(
+      inputs,
+      fn(i) {
+        let Input { output: Output { datum, .. }, .. } = i
+        when datum is {
+          NoDatum -> False
+          _ -> True
+        }
+      },
+    )
+
   expect pool_out_datum: PoolDatum =
     must_find_script_datum(outputs, datums, pool_output)
 
   let PoolDatum {
     balances: pool_out_balances,
     total_liquidity: pool_out_total_liquidity,
+    order_hash: pool_out_order_hash,
     ..
   } = pool_out_datum
 
   let PoolDatum {
     balances: pool_in_balances,
     total_liquidity: pool_in_total_liquidity,
+    order_hash: pool_in_order_hash,
     ..
   } = pool_in_datum
 
   // - Pool NFT is the part of Pool Value, which is known as Pool Identifier
   // - Pool NFT must be existed on both Pool In/Output Value
   let Asset { policy_id: nft_policy_id, asset_name: nft_asset_name } = nft_asset
-  let has_nft_asset_in_input =
+  // Pool NFT must be existed in Pool Input and Output value
+  expect True =
     value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1
-  let has_nft_asset_in_output =
+  expect True =
     value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1
-  let is_valid_pool_value = check_pool_value(pool_out_value, assets)
+
+  // Pool Value must only contains necessary token inside
+  expect True = check_pool_value(pool_out_value, assets)
 
   // - Only Pool Datum's AMP can be updated, other fields must remain unchanged
   // - TODO: Research the acceptable range which AMP can be changed
-  let is_valid_pool_datum =
-    pool_in_balances == pool_out_balances && pool_in_total_liquidity == pool_out_total_liquidity
+  expect True =
+    pool_in_balances == pool_out_balances && pool_in_total_liquidity == pool_out_total_liquidity && pool_in_order_hash == pool_out_order_hash
   let value_balances_in =
     list.map(
       assets,
@@ -484,46 +493,21 @@ fn validate_update_amp_or_update_stake_credential(
         value.quantity_of(pool_out_value, policy_id, asset_name)
       },
     )
+  // Pool Value must be unchanged in this redeemer
+  expect True = value_balances_in == value_balances_out
 
   let admin_input = utils.must_parse_option(list.at(inputs, admin_index))
   let admin_value = admin_input.output.value
   let Asset { policy_id: admin_policy_id, asset_name: admin_asset_name } =
     admin_asset
-  let has_admin =
+  // Only Admin token can trigger this redeemer
+  expect True =
     value.quantity_of(admin_value, admin_policy_id, admin_asset_name) == 1
   let mint_value = value.from_minted_value(mint)
-  let is_mint_nothing = list.length(value.flatten(mint_value)) == 0
-  let has_one_script_in_input =
-    list.length(
-      list.filter(
-        inputs,
-        fn(i) {
-          let Input { output: Output { datum, .. }, .. } = i
-          when datum is {
-            NoDatum -> False
-            _ -> True
-          }
-        },
-      ),
-    ) == 1
-  // (1), (2)  -> Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
-  //              The `expect [pool_output]` above has already validated Pool Output part
-  // (3), (4)  -> Pool NFT must be existed in Pool Input and Output value
-  // (5)       -> Pool Value must only contains necessary token inside
-  // (6)       -> This Redeemer won't mint anything 
-  // (7)       -> Irrelevant fields in Pool datum must be unchanged
-  // (8)       -> Only Admin token can trigger this redeemer
-  // (9)       -> Pool Value must be unchanged in this redeemer
-  has_one_pool_input && // (1)
-  has_one_script_in_input && // (2)
-  has_nft_asset_in_input && // (3)
-  has_nft_asset_in_output && // (4)
-  is_valid_pool_value && // (5)
-  is_mint_nothing && // (6)
-  is_valid_pool_datum && // (7)
-  has_admin && // (8)
-  value_balances_in == value_balances_out
-  // ^ (9)
+  // This Redeemer won't mint anything 
+  expect [] = value.flatten(mint_value)
+
+  True
 }
 
 fn find_order_datum(
@@ -550,157 +534,140 @@ fn apply_orders(
   fee_denominator: Int,
   pool_state: (List<Int>, List<Int>, Int),
 ) -> (List<Int>, List<Int>, Int) {
-  if list.length(user_inputs) != list.length(user_outputs) {
-    error
-  } else {
-    when user_inputs is {
-      [] -> pool_state
-      [input, ..inputs] ->
-        when user_outputs is {
-          [] -> pool_state
-          [output, ..outputs] -> {
-            let Input { output: order_in_output, .. } = input
-            let Output { value: order_in_value, .. } = order_in_output
-            let Output {
-              value: order_out_value,
-              address: output_address,
-              datum: order_output_datum,
-              ..
-            } = output
-            let OrderDatum {
-              receiver,
-              batcher_fee,
-              output_ada,
-              step: order_step,
-              receiver_datum_hash,
-              ..
-            } = find_order_datum(all_outputs, datum_dict, order_in_output)
-            let is_valid_receiver_datum_hash =
-              when receiver_datum_hash is {
-                Some(datum_hash) -> {
-                  expect DatumHash(output_datum_hash) = order_output_datum
-                  output_datum_hash == datum_hash
-                }
-                None -> order_output_datum == NoDatum
+  when user_inputs is {
+    [] -> pool_state
+    [input, ..inputs] ->
+      when user_outputs is {
+        [] -> pool_state
+        [output, ..outputs] -> {
+          let Input { output: order_in_output, .. } = input
+          let Output { value: order_in_value, .. } = order_in_output
+          let Output {
+            value: order_out_value,
+            address: output_address,
+            datum: order_output_datum,
+            ..
+          } = output
+          let OrderDatum {
+            receiver,
+            batcher_fee,
+            output_ada,
+            step: order_step,
+            receiver_datum_hash,
+            ..
+          } = find_order_datum(all_outputs, datum_dict, order_in_output)
+          let is_valid_receiver_datum_hash =
+            when receiver_datum_hash is {
+              Some(datum_hash) -> {
+                expect DatumHash(output_datum_hash) = order_output_datum
+                output_datum_hash == datum_hash
               }
-            let is_valid_order_datum =
-              receiver == output_address && batcher_fee > 0 && output_ada > 0 && is_valid_receiver_datum_hash
-            if !is_valid_order_datum {
-              error
-            } else {
-              let new_state =
-                when order_step is {
-                  Exchange(asset_in_index, asset_out_index, minimum_asset_out) ->
-                    if minimum_asset_out > 0 {
-                      validate_exchange(
-                        order_in_value,
-                        order_out_value,
-                        asset_in_index,
-                        asset_out_index,
-                        minimum_asset_out,
-                        output_ada,
-                        assets,
-                        multiples,
-                        amp,
-                        fee,
-                        admin_fee,
-                        fee_denominator,
-                        pool_state,
-                      )
-                    } else {
-                      error
-                    }
-                  Deposit(minimum_lp) ->
-                    if minimum_lp > 0 {
-                      validate_deposit(
-                        order_in_value,
-                        order_out_value,
-                        minimum_lp,
-                        output_ada,
-                        assets,
-                        multiples,
-                        lp_asset,
-                        amp,
-                        fee,
-                        admin_fee,
-                        fee_denominator,
-                        pool_state,
-                      )
-                    } else {
-                      error
-                    }
-                  Withdraw(minimum_amounts) ->
-                    if utils.verify_non_negative_amounts(minimum_amounts) {
-                      validate_withdraw(
-                        order_in_value,
-                        order_out_value,
-                        minimum_amounts,
-                        output_ada,
-                        assets,
-                        lp_asset,
-                        pool_state,
-                      )
-                    } else {
-                      error
-                    }
-                  WithdrawImbalance(amounts_out) ->
-                    if utils.verify_non_negative_amounts(amounts_out) {
-                      validate_withdraw_imbalance(
-                        order_in_value,
-                        order_out_value,
-                        amounts_out,
-                        output_ada,
-                        assets,
-                        multiples,
-                        lp_asset,
-                        amp,
-                        fee,
-                        admin_fee,
-                        fee_denominator,
-                        pool_state,
-                      )
-                    } else {
-                      error
-                    }
-                  WithdrawOneCoin(asset_out_index, minimum_asset_out) ->
-                    if minimum_asset_out > 0 {
-                      validate_withdraw_one_coin(
-                        order_in_value,
-                        order_out_value,
-                        asset_out_index,
-                        minimum_asset_out,
-                        output_ada,
-                        assets,
-                        multiples,
-                        lp_asset,
-                        amp,
-                        fee,
-                        admin_fee,
-                        fee_denominator,
-                        pool_state,
-                      )
-                    } else {
-                      error
-                    }
-                }
-              apply_orders(
-                all_outputs,
-                datum_dict,
-                inputs,
-                outputs,
-                assets,
-                multiples,
-                lp_asset,
-                amp,
-                fee,
-                admin_fee,
-                fee_denominator,
-                new_state,
-              )
+              None -> order_output_datum == NoDatum
             }
-          }
+          // Verify Order Datum is correct
+          expect True =
+            receiver == output_address && batcher_fee > 0 && output_ada > 0 && is_valid_receiver_datum_hash
+          let new_state =
+            when order_step is {
+              Exchange(asset_in_index, asset_out_index, minimum_asset_out) -> {
+                expect True = minimum_asset_out > 0
+                validate_exchange(
+                  order_in_value: order_in_value,
+                  order_out_value: order_out_value,
+                  in_index: asset_in_index,
+                  out_index: asset_out_index,
+                  minimum_amount_out: minimum_asset_out,
+                  output_ada: output_ada,
+                  assets: assets,
+                  multiples: multiples,
+                  amp: amp,
+                  fee: fee,
+                  admin_fee: admin_fee,
+                  fee_denominator: fee_denominator,
+                  pool_state: pool_state,
+                )
+              }
+              Deposit(minimum_lp) -> {
+                expect True = minimum_lp > 0
+                validate_deposit(
+                  order_in_value: order_in_value,
+                  order_out_value: order_out_value,
+                  minimum_lp: minimum_lp,
+                  output_ada: output_ada,
+                  assets: assets,
+                  multiples: multiples,
+                  lp_asset: lp_asset,
+                  amp: amp,
+                  fee: fee,
+                  admin_fee: admin_fee,
+                  fee_denominator: fee_denominator,
+                  pool_state: pool_state,
+                )
+              }
+              Withdraw(minimum_amounts) -> {
+                expect True = utils.verify_non_negative_amounts(minimum_amounts)
+                validate_withdraw(
+                  order_in_value: order_in_value,
+                  order_out_value: order_out_value,
+                  minimum_amounts: minimum_amounts,
+                  output_ada: output_ada,
+                  assets: assets,
+                  lp_asset: lp_asset,
+                  pool_state: pool_state,
+                )
+              }
+              WithdrawImbalance(amounts_out) -> {
+                expect True = utils.verify_non_negative_amounts(amounts_out)
+                validate_withdraw_imbalance(
+                  order_in_value: order_in_value,
+                  order_out_value: order_out_value,
+                  amounts_out: amounts_out,
+                  output_ada: output_ada,
+                  assets: assets,
+                  multiples: multiples,
+                  lp_asset: lp_asset,
+                  amp: amp,
+                  fee: fee,
+                  admin_fee: admin_fee,
+                  fee_denominator: fee_denominator,
+                  pool_state: pool_state,
+                )
+              }
+              WithdrawOneCoin(asset_out_index, minimum_asset_out) -> {
+                expect True = minimum_asset_out > 0
+                validate_withdraw_one_coin(
+                  order_in_value: order_in_value,
+                  order_out_value: order_out_value,
+                  out_index: asset_out_index,
+                  minimum_amount_out: minimum_asset_out,
+                  output_ada: output_ada,
+                  assets: assets,
+                  multiples: multiples,
+                  lp_asset: lp_asset,
+                  amp: amp,
+                  fee: fee,
+                  admin_fee: admin_fee,
+                  fee_denominator: fee_denominator,
+                  pool_state: pool_state,
+                )
+              }
+            }
+          apply_orders(
+            all_outputs: all_outputs,
+            datum_dict: datum_dict,
+            user_inputs: inputs,
+            user_outputs: outputs,
+            assets: assets,
+            multiples: multiples,
+            lp_asset: lp_asset,
+            amp: amp,
+            fee: fee,
+            admin_fee: admin_fee,
+            fee_denominator: fee_denominator,
+            pool_state: new_state,
+          )
         }
-    }
+      }
   }
 }
 
@@ -719,22 +686,16 @@ fn calculate_deposit(
   let new_value_balances =
     utils.zip_with(value_balances, amount_ins, fn(balance, in) { balance + in })
   if total_liquidity == 0 {
-    if !utils.verify_positive_ints(amount_ins) {
-      error
-    } else {
-      let new_datum_balances =
-        utils.zip_with(
-          datum_balances,
-          amount_ins,
-          fn(balance, in) { balance + in },
-        )
-      let d1 = poolutils.get_d_mem(new_datum_balances, multiples, amp)
-      if d1 > 0 {
-        (new_datum_balances, new_value_balances, d1)
-      } else {
-        error
-      }
-    }
+    expect True = utils.verify_positive_ints(amount_ins)
+    let new_datum_balances =
+      utils.zip_with(
+        datum_balances,
+        amount_ins,
+        fn(balance, in) { balance + in },
+      )
+    let d1 = poolutils.get_d_mem(new_datum_balances, multiples, amp)
+    expect True = d1 > 0
+    (new_datum_balances, new_value_balances, d1)
   } else {
     let new_datum_balances_without_fee =
       utils.zip_with(
@@ -775,18 +736,13 @@ fn calculate_deposit(
           snd
         },
       )
-    if !utils.verify_positive_ints(new_datum_balances_with_trading_fee) {
-      error
-    } else {
-      let d2 =
-        poolutils.get_d_mem(new_datum_balances_with_trading_fee, multiples, amp)
-      let lp_amount = total_liquidity * ( d2 - d0 ) / d0
-      if d1 <= d0 {
-        error
-      } else {
-        (new_datum_balances, new_value_balances, lp_amount)
-      }
-    }
+    expect True =
+      utils.verify_positive_ints(new_datum_balances_with_trading_fee)
+    let d2 =
+      poolutils.get_d_mem(new_datum_balances_with_trading_fee, multiples, amp)
+    let lp_amount = total_liquidity * ( d2 - d0 ) / d0
+    expect True = d1 > d0
+    (new_datum_balances, new_value_balances, lp_amount)
   }
 }
 
@@ -816,16 +772,16 @@ fn validate_deposit(
     )
   let (new_datum_balances, new_value_balances, lp_amount) =
     calculate_deposit(
-      multiples,
-      fee,
-      admin_fee,
-      fee_denominator,
-      assets,
-      amount_ins,
-      amp,
-      datum_balances,
-      value_balances,
-      total_liquidity,
+      multiples: multiples,
+      fee: fee,
+      admin_fee: admin_fee,
+      fee_denominator: fee_denominator,
+      assets: assets,
+      amount_ins: amount_ins,
+      amp: amp,
+      datum_balances: datum_balances,
+      value_balances: value_balances,
+      total_liquidity: total_liquidity,
     )
   let amount_lp_out =
     value.quantity_of(order_out_value, lp_policy_id, lp_asset_name)
@@ -837,12 +793,12 @@ fn validate_deposit(
     )
   let is_valid_amount_out =
     lp_amount == amount_lp_out && amount_ada_out == output_ada
-  let over_slippage = lp_amount < minimum_lp
-  if is_valid_amount_out && !over_slippage {
-    (new_datum_balances, new_value_balances, total_liquidity + lp_amount)
-  } else {
-    error
-  }
+  let not_over_slippage = lp_amount >= minimum_lp
+  let is_valid_value_out_length =
+    list.length(value.flatten(order_out_value)) == 2
+  expect True =
+    is_valid_amount_out && is_valid_value_out_length && not_over_slippage
+  (new_datum_balances, new_value_balances, total_liquidity + lp_amount)
 }
 
 fn validate_withdraw(
@@ -889,15 +845,28 @@ fn validate_withdraw(
     )
   let is_valid_amount_out =
     assets_amount_out == asset_amounts && amount_ada_out == output_ada
-  if is_valid_amount_out && not_over_slippage {
-    (
-      new_datum_balances,
-      new_value_balances,
-      total_liquidity - withdrawal_lp_amount,
+  let stable_assets_in_output_length =
+    list.reduce(
+      assets_amount_out,
+      0,
+      fn(n, am) {
+        if am > 0 {
+          n + 1
+        } else {
+          n
+        }
+      },
     )
-  } else {
-    error
-  }
+  let expected_value_out_length = stable_assets_in_output_length + 1
+  let is_valid_value_out_length =
+    list.length(value.flatten(order_out_value)) == expected_value_out_length
+  expect True =
+    is_valid_amount_out && is_valid_value_out_length && not_over_slippage
+  (
+    new_datum_balances,
+    new_value_balances,
+    total_liquidity - withdrawal_lp_amount,
+  )
 }
 
 fn calculate_exchange(
@@ -985,18 +954,18 @@ fn validate_exchange(
     value.quantity_of(order_in_value, asset_in_policy_id, asset_in_asset_name)
   let (amount_out, new_datum_balances, new_value_balances) =
     calculate_exchange(
-      multiples,
-      fee,
-      admin_fee,
-      fee_denominator,
-      amount_in,
-      in_index,
-      out_index,
-      amp,
-      datum_balances,
-      value_balances,
+      multiples: multiples,
+      fee: fee,
+      admin_fee: admin_fee,
+      fee_denominator: fee_denominator,
+      amount_in: amount_in,
+      in_index: in_index,
+      out_index: out_index,
+      amp: amp,
+      datum_balances: datum_balances,
+      value_balances: value_balances,
     )
-  let over_slippage = amount_out < minimum_amount_out
+  let not_over_slippage = amount_out >= minimum_amount_out
   let asset_amount_out =
     value.quantity_of(
       order_out_value,
@@ -1011,11 +980,11 @@ fn validate_exchange(
     )
   let is_valid_amount_out =
     asset_amount_out == amount_out && amount_ada_out == output_ada
-  if is_valid_amount_out && !over_slippage {
-    (new_datum_balances, new_value_balances, total_liquidity)
-  } else {
-    error
-  }
+  let is_valid_value_out_length =
+    list.length(value.flatten(order_out_value)) == 2
+  expect True =
+    is_valid_amount_out && is_valid_value_out_length && not_over_slippage
+  (new_datum_balances, new_value_balances, total_liquidity)
 }
 
 fn validate_withdraw_imbalance(
@@ -1040,90 +1009,98 @@ fn validate_withdraw_imbalance(
       amounts_out,
       fn(balance, out) { balance - out },
     )
-  if !utils.verify_positive_ints(new_datum_balances_without_fee) {
-    error
-  } else {
-    let n = list.length(datum_balances)
-    let d0 = poolutils.get_d_mem(datum_balances, multiples, amp)
-    let d1 = poolutils.get_d_mem(new_datum_balances_without_fee, multiples, amp)
-    let special_fee = fee * n / ( 4 * ( n - 1 ) )
-    let new_datum_balances_pair =
-      utils.zip_with(
-        datum_balances,
-        new_datum_balances_without_fee,
-        fn(old_balance, new_balance) {
-          let ideal_balance = d1 * old_balance / d0
-          let difference = utils.abs(new_balance - ideal_balance)
-          let trading_fee_amount = special_fee * difference / fee_denominator
-          let admin_fee_amount =
-            trading_fee_amount * admin_fee / fee_denominator
-          (new_balance - admin_fee_amount, new_balance - trading_fee_amount)
-        },
-      )
-    let new_datum_balances =
-      list.map(
-        new_datum_balances_pair,
-        fn(pair) {
-          let (fst, _) = pair
-          fst
-        },
-      )
-    let new_datum_balances_with_trading_fee =
-      list.map(
-        new_datum_balances_pair,
-        fn(pair) {
-          let (_, snd) = pair
-          snd
-        },
-      )
-    if !utils.verify_positive_ints(new_datum_balances_with_trading_fee) {
-      error
-    } else {
-      let d2 =
-        poolutils.get_d_mem(new_datum_balances_with_trading_fee, multiples, amp)
-      let withdrawal_lp_amount =
-        value.quantity_of(order_in_value, lp_policy_id, lp_asset_name)
-      let necessary_lp_amount = total_liquidity * ( d0 - d2 ) / d0 + 1
-      if necessary_lp_amount <= 1 {
-        error
-      } else {
-        let over_slippage = withdrawal_lp_amount < necessary_lp_amount
-        let asset_amounts_out =
-          list.map(
-            assets,
-            fn(asset) {
-              let Asset { policy_id, asset_name } = asset
-              value.quantity_of(order_out_value, policy_id, asset_name)
-            },
-          )
-        let amount_ada_out =
-          value.quantity_of(
-            order_out_value,
-            value.ada_policy_id,
-            value.ada_asset_name,
-          )
-        let change_lp_amount =
-          value.quantity_of(order_out_value, lp_policy_id, lp_asset_name)
-        let is_valid_amount =
-          amounts_out == asset_amounts_out && amount_ada_out == output_ada && change_lp_amount == withdrawal_lp_amount - necessary_lp_amount
-        let new_value_balances =
-          utils.zip_with(
-            value_balances,
-            amounts_out,
-            fn(balance, out) { balance - out },
-          )
-        if is_valid_amount && !over_slippage {
-          (
-            new_datum_balances,
-            new_value_balances,
-            total_liquidity - necessary_lp_amount,
-          )
+  expect True = utils.verify_positive_ints(new_datum_balances_without_fee)
+  let n = list.length(datum_balances)
+  let d0 = poolutils.get_d_mem(datum_balances, multiples, amp)
+  let d1 = poolutils.get_d_mem(new_datum_balances_without_fee, multiples, amp)
+  let special_fee = fee * n / ( 4 * ( n - 1 ) )
+  let new_datum_balances_pair =
+    utils.zip_with(
+      datum_balances,
+      new_datum_balances_without_fee,
+      fn(old_balance, new_balance) {
+        let ideal_balance = d1 * old_balance / d0
+        let difference = utils.abs(new_balance - ideal_balance)
+        let trading_fee_amount = special_fee * difference / fee_denominator
+        let admin_fee_amount = trading_fee_amount * admin_fee / fee_denominator
+        (new_balance - admin_fee_amount, new_balance - trading_fee_amount)
+      },
+    )
+  let new_datum_balances =
+    list.map(
+      new_datum_balances_pair,
+      fn(pair) {
+        let (fst, _) = pair
+        fst
+      },
+    )
+  let new_datum_balances_with_trading_fee =
+    list.map(
+      new_datum_balances_pair,
+      fn(pair) {
+        let (_, snd) = pair
+        snd
+      },
+    )
+  expect True = utils.verify_positive_ints(new_datum_balances_with_trading_fee)
+  let d2 =
+    poolutils.get_d_mem(new_datum_balances_with_trading_fee, multiples, amp)
+  let withdrawal_lp_amount =
+    value.quantity_of(order_in_value, lp_policy_id, lp_asset_name)
+  let necessary_lp_amount = total_liquidity * ( d0 - d2 ) / d0 + 1
+  expect True = necessary_lp_amount > 1
+  let not_over_slippage = withdrawal_lp_amount >= necessary_lp_amount
+  let asset_amounts_out =
+    list.map(
+      assets,
+      fn(asset) {
+        let Asset { policy_id, asset_name } = asset
+        value.quantity_of(order_out_value, policy_id, asset_name)
+      },
+    )
+  let amount_ada_out =
+    value.quantity_of(
+      order_out_value,
+      value.ada_policy_id,
+      value.ada_asset_name,
+    )
+  let change_lp_amount =
+    value.quantity_of(order_out_value, lp_policy_id, lp_asset_name)
+  let is_valid_amount =
+    amounts_out == asset_amounts_out && amount_ada_out == output_ada && change_lp_amount == withdrawal_lp_amount - necessary_lp_amount
+  let new_value_balances =
+    utils.zip_with(
+      value_balances,
+      amounts_out,
+      fn(balance, out) { balance - out },
+    )
+  let stable_assets_in_output_length =
+    list.reduce(
+      asset_amounts_out,
+      0,
+      fn(n, am) {
+        if am > 0 {
+          n + 1
         } else {
-          error
+          n
         }
-      }
+      },
+    )
+  let expected_value_out_length =
+    if change_lp_amount > 0 {
+      stable_assets_in_output_length + 2
+    } else {
+      stable_assets_in_output_length + 1
     }
-  }
+  let is_valid_value_out_length =
+    list.length(value.flatten(order_out_value)) == expected_value_out_length
+  expect True =
+    is_valid_amount && is_valid_value_out_length && not_over_slippage
+  (
+    new_datum_balances,
+    new_value_balances,
+    total_liquidity - necessary_lp_amount,
+  )
 }
 
 fn calculate_withdraw_one_coin(
@@ -1149,7 +1126,7 @@ fn calculate_withdraw_one_coin(
   let out_amount_without_fee =
     ( utils.must_parse_option(list.at(multiple_balances, out_index)) - new_y ) / multiple_out
   let assets_length = list.length(datum_balances)
-  let special_fee = fee * assets_length / 4 / ( assets_length - 1 )
+  let special_fee = fee * assets_length / ( 4 * ( assets_length - 1 ) )
   let multiple_balances_reduced =
     list.indexed_map(
       multiple_balances,
@@ -1197,16 +1174,16 @@ fn validate_withdraw_one_coin(
     value.quantity_of(order_in_value, lp_policy_id, lp_asset_name)
   let (amount_out, fee_amount) =
     calculate_withdraw_one_coin(
-      multiples,
-      fee,
-      fee_denominator,
-      amount_lp_in,
-      out_index,
-      amp,
-      datum_balances,
-      total_liquidity,
+      multiples: multiples,
+      fee: fee,
+      fee_denominator: fee_denominator,
+      amount_lp_in: amount_lp_in,
+      out_index: out_index,
+      amp: amp,
+      datum_balances: datum_balances,
+      total_liquidity: total_liquidity,
     )
-  let over_slippage = amount_out < minimum_amount_out
+  let not_over_slippage = amount_out >= minimum_amount_out
   let Asset { policy_id: asset_out_policy_id, asset_name: asset_out_asset_name } =
     asset_out
   let asset_amount_out =
@@ -1246,11 +1223,11 @@ fn validate_withdraw_one_coin(
         }
       },
     )
-  if is_valid_amount_out && !over_slippage {
-    (new_datum_balances, new_value_balances, total_liquidity - amount_lp_in)
-  } else {
-    error
-  }
+  let is_valid_value_out_length =
+    list.length(value.flatten(order_out_value)) == 2
+  expect True =
+    is_valid_amount_out && is_valid_value_out_length && not_over_slippage
+  (new_datum_balances, new_value_balances, total_liquidity - amount_lp_in)
 }
 
 fn find_posix_time_range(time_rage: ValidityRange) -> (Int, Int) {

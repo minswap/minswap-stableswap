@@ -42,6 +42,7 @@ pub type PoolDatum {
   balances: List<Int>,
   total_liquidity: Int,
   amp: Int,
+  order_hash: ValidatorHash,
 }
 
 pub type PoolRedeemer {
