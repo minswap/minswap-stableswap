@@ -152,7 +152,7 @@ fn validate_apply_pool(
   // The Amplification Coeffience & Order Hash must be unchanged. Amplification Coeffience can only be update via @UpdateAmp redeemer
   expect
     pool_in_amp == pool_out_amp && pool_in_order_hash == pool_out_order_hash
-  let license_input = utils.must_parse_option(list.at(inputs, license_idx))
+  let license_input = utils.list_at_index(inputs, license_idx)
   let license_deadline =
     find_license_deadline(license_symbol, license_input.output.value)
   let (start_valid_time_range, end_valid_time_range) =
@@ -189,9 +189,7 @@ fn validate_apply_pool(
     list.foldl(
       input_indexes,
       [],
-      fn(idx, ips) {
-        list.push(ips, utils.must_parse_option(list.at(user_inputs, idx)))
-      },
+      fn(idx, ips) { list.push(ips, utils.list_at_index(user_inputs, idx)) },
     )
   let user_outputs =
     list.filter(
@@ -351,7 +349,7 @@ fn validate_withdraw_admin_fee(
       pool_in_balances,
       fn(val, bal) { val - bal },
     )
-  let fee_to_output = utils.must_parse_option(list.at(outputs, fee_to_index))
+  let fee_to_output = utils.list_at_index(outputs, fee_to_index)
   let withdrawal_amounts =
     list.map(
       assets,
@@ -362,7 +360,7 @@ fn validate_withdraw_admin_fee(
     )
   // Admin can only withdraw the exact accumulated admin fee amounts
   expect withdrawal_amounts == admin_fee_amounts
-  let admin_input = utils.must_parse_option(list.at(inputs, admin_index))
+  let admin_input = utils.list_at_index(inputs, admin_index)
   let admin_value = admin_input.output.value
   let Asset { policy_id: admin_policy_id, asset_name: admin_asset_name } =
     admin_asset
@@ -477,7 +475,7 @@ fn validate_update_amp_or_update_stake_credential(
     )
   // Pool Value must be unchanged in this redeemer
   expect value_balances_in == value_balances_out
-  let admin_input = utils.must_parse_option(list.at(inputs, admin_index))
+  let admin_input = utils.list_at_index(inputs, admin_index)
   let admin_value = admin_input.output.value
   let Asset { policy_id: admin_policy_id, asset_name: admin_asset_name } =
     admin_asset
@@ -770,12 +768,12 @@ fn validate_deposit(
       value.ada_policy_id,
       value.ada_asset_name,
     )
-  let is_valid_amount_out =
-    lp_amount == amount_lp_out && amount_ada_out == output_ada
-  let not_over_slippage = lp_amount >= minimum_lp
-  let is_valid_value_out_length =
-    list.length(value.flatten(order_out_value)) == 2
-  expect is_valid_amount_out && is_valid_value_out_length && not_over_slippage
+  // Make sure that the actual lp amount will be minted must be greater than the minimum acceptance of this order
+  expect lp_amount >= minimum_lp
+  // Verify the amount will be returned to users must be followed by the calculation above
+  expect lp_amount == amount_lp_out && amount_ada_out == output_ada
+  // Verify the output will be returned to users must contains only necessary tokens
+  expect list.length(value.flatten(order_out_value)) == 2
   (new_datum_balances, new_value_balances, total_liquidity + lp_amount)
 }
 
@@ -801,7 +799,8 @@ fn validate_withdraw(
     utils.zip_with(datum_balances, asset_amounts, fn(b1, b2) { b1 - b2 })
   let new_value_balances =
     utils.zip_with(value_balances, asset_amounts, fn(b1, b2) { b1 - b2 })
-  let not_over_slippage =
+  // Make sure that the actual assets amount must be greater than the minimum acceptance of this order
+  expect
     utils.compare_list_with(
       asset_amounts,
       minimum_amounts,
@@ -821,8 +820,8 @@ fn validate_withdraw(
       value.ada_policy_id,
       value.ada_asset_name,
     )
-  let is_valid_amount_out =
-    assets_amount_out == asset_amounts && amount_ada_out == output_ada
+  // Verify the amount will be returned to users must be followed by the calculation above
+  expect assets_amount_out == asset_amounts && amount_ada_out == output_ada
   let stable_assets_in_output_length =
     list.reduce(
       assets_amount_out,
@@ -836,9 +835,9 @@ fn validate_withdraw(
       },
     )
   let expected_value_out_length = stable_assets_in_output_length + 1
-  let is_valid_value_out_length =
+  // Verify the output will be returned to users must contains only necessary tokens
+  expect
     list.length(value.flatten(order_out_value)) == expected_value_out_length
-  expect is_valid_amount_out && is_valid_value_out_length && not_over_slippage
   (
     new_datum_balances,
     new_value_balances,
@@ -864,12 +863,10 @@ fn calculate_exchange(
       multiples,
       fn(balance, multiple) { balance * multiple },
     )
-  let multiple_in = utils.must_parse_option(list.at(multiples, in_index))
-  let multiple_out = utils.must_parse_option(list.at(multiples, out_index))
-  let multiple_balances_in =
-    utils.must_parse_option(list.at(multiple_balances, in_index))
-  let multiple_balances_out =
-    utils.must_parse_option(list.at(multiple_balances, out_index))
+  let multiple_in = utils.list_at_index(multiples, in_index)
+  let multiple_out = utils.list_at_index(multiples, out_index)
+  let multiple_balances_in = utils.list_at_index(multiple_balances, in_index)
+  let multiple_balances_out = utils.list_at_index(multiple_balances, out_index)
   let x = multiple_balances_in + amount_in * multiple_in
   let y = poolutils.get_y(in_index, out_index, x, multiple_balances, amp)
   let dy = multiple_balances_out - y
@@ -924,9 +921,9 @@ fn validate_exchange(
 ) -> (List<Int>, List<Int>, Int) {
   let (datum_balances, value_balances, total_liquidity) = pool_state
   let Asset { policy_id: asset_in_policy_id, asset_name: asset_in_asset_name } =
-    utils.must_parse_option(list.at(assets, in_index))
+    utils.list_at_index(assets, in_index)
   let Asset { policy_id: asset_out_policy_id, asset_name: asset_out_asset_name } =
-    utils.must_parse_option(list.at(assets, out_index))
+    utils.list_at_index(assets, out_index)
   let amount_in =
     value.quantity_of(order_in_value, asset_in_policy_id, asset_in_asset_name)
   let (amount_out, new_datum_balances, new_value_balances) =
@@ -942,7 +939,8 @@ fn validate_exchange(
       datum_balances: datum_balances,
       value_balances: value_balances,
     )
-  let not_over_slippage = amount_out >= minimum_amount_out
+  // Make sure that the actual asset amount must be greater than the minimum acceptance of this order
+  expect amount_out >= minimum_amount_out
   let asset_amount_out =
     value.quantity_of(
       order_out_value,
@@ -955,11 +953,10 @@ fn validate_exchange(
       value.ada_policy_id,
       value.ada_asset_name,
     )
-  let is_valid_amount_out =
-    asset_amount_out == amount_out && amount_ada_out == output_ada
-  let is_valid_value_out_length =
-    list.length(value.flatten(order_out_value)) == 2
-  expect is_valid_amount_out && is_valid_value_out_length && not_over_slippage
+  // Verify the amount will be returned to users must be followed by the calculation above
+  expect asset_amount_out == amount_out && amount_ada_out == output_ada
+  // Verify the output will be returned to users must contains only necessary tokens
+  expect list.length(value.flatten(order_out_value)) == 2
   (new_datum_balances, new_value_balances, total_liquidity)
 }
 
@@ -1024,8 +1021,9 @@ fn validate_withdraw_imbalance(
   let withdrawal_lp_amount =
     value.quantity_of(order_in_value, lp_policy_id, lp_asset_name)
   let necessary_lp_amount = total_liquidity * ( d0 - d2 ) / d0 + 1
-  expect necessary_lp_amount > 1
-  let not_over_slippage = withdrawal_lp_amount >= necessary_lp_amount
+
+  // Make sure that the nessesary lp amount must be positive and less than the LP of this order
+  expect necessary_lp_amount > 1 && withdrawal_lp_amount >= necessary_lp_amount
   let asset_amounts_out =
     list.map(
       assets,
@@ -1042,7 +1040,9 @@ fn validate_withdraw_imbalance(
     )
   let change_lp_amount =
     value.quantity_of(order_out_value, lp_policy_id, lp_asset_name)
-  let is_valid_amount =
+
+  // Verify the amount will be returned to users must be followed by the calculation above
+  expect
     amounts_out == asset_amounts_out && amount_ada_out == output_ada && change_lp_amount == withdrawal_lp_amount - necessary_lp_amount
   let new_value_balances =
     utils.zip_with(
@@ -1068,9 +1068,10 @@ fn validate_withdraw_imbalance(
     } else {
       stable_assets_in_output_length + 1
     }
-  let is_valid_value_out_length =
+
+  // Verify the output will be returned to users must contains only necessary tokens
+  expect
     list.length(value.flatten(order_out_value)) == expected_value_out_length
-  expect is_valid_amount && is_valid_value_out_length && not_over_slippage
   (
     new_datum_balances,
     new_value_balances,
@@ -1097,9 +1098,9 @@ fn calculate_withdraw_one_coin(
   let d0 = poolutils.get_d(multiple_balances, amp)
   let d1 = d0 - amount_lp_in * d0 / total_liquidity
   let new_y = poolutils.get_y_d(out_index, multiple_balances, amp, d1)
-  let multiple_out = utils.must_parse_option(list.at(multiples, out_index))
+  let multiple_out = utils.list_at_index(multiples, out_index)
   let out_amount_without_fee =
-    ( utils.must_parse_option(list.at(multiple_balances, out_index)) - new_y ) / multiple_out
+    ( utils.list_at_index(multiple_balances, out_index) - new_y ) / multiple_out
   let assets_length = list.length(datum_balances)
   let special_fee = fee * assets_length / ( 4 * ( assets_length - 1 ) )
   let multiple_balances_reduced =
@@ -1117,7 +1118,7 @@ fn calculate_withdraw_one_coin(
     )
   let out_amount =
     (
-      utils.must_parse_option(list.at(multiple_balances_reduced, out_index)) - poolutils.get_y_d(
+      utils.list_at_index(multiple_balances_reduced, out_index) - poolutils.get_y_d(
         out_index,
         multiple_balances_reduced,
         amp,
@@ -1143,7 +1144,7 @@ fn validate_withdraw_one_coin(
   pool_state: (List<Int>, List<Int>, Int),
 ) -> (List<Int>, List<Int>, Int) {
   let (datum_balances, value_balances, total_liquidity) = pool_state
-  let asset_out = utils.must_parse_option(list.at(assets, out_index))
+  let asset_out = utils.list_at_index(assets, out_index)
   let Asset { policy_id: lp_policy_id, asset_name: lp_asset_name } = lp_asset
   let amount_lp_in =
     value.quantity_of(order_in_value, lp_policy_id, lp_asset_name)
@@ -1158,7 +1159,8 @@ fn validate_withdraw_one_coin(
       datum_balances: datum_balances,
       total_liquidity: total_liquidity,
     )
-  let not_over_slippage = amount_out >= minimum_amount_out
+  // Make sure that the actual asset amount must be greater than the minimum acceptance of this order
+  expect amount_out >= minimum_amount_out
   let Asset { policy_id: asset_out_policy_id, asset_name: asset_out_asset_name } =
     asset_out
   let asset_amount_out =
@@ -1173,8 +1175,8 @@ fn validate_withdraw_one_coin(
       value.ada_policy_id,
       value.ada_asset_name,
     )
-  let is_valid_amount_out =
-    asset_amount_out == amount_out && amount_ada_out == output_ada
+  // Verify the amount will be returned to users must be followed by the calculation above
+  expect asset_amount_out == amount_out && amount_ada_out == output_ada
   let admin_fee_amount = fee_amount * admin_fee / fee_denominator
   let new_datum_balances =
     list.indexed_map(
@@ -1198,9 +1200,8 @@ fn validate_withdraw_one_coin(
         }
       },
     )
-  let is_valid_value_out_length =
-    list.length(value.flatten(order_out_value)) == 2
-  expect is_valid_amount_out && is_valid_value_out_length && not_over_slippage
+  // Verify the output will be returned to users must contains only necessary tokens
+  expect list.length(value.flatten(order_out_value)) == 2
   (new_datum_balances, new_value_balances, total_liquidity - amount_lp_in)
 }
 

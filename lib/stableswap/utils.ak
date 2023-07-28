@@ -197,3 +197,58 @@ pub fn must_parse_option(op: Option<a>) -> a {
   expect Some(t) = op
   t
 }
+
+pub fn list_at_index(outputs: List<a>, payout_outputs_offset: Int) -> a {
+  if payout_outputs_offset >= 10 {
+    outputs
+      |> skip_10_items
+      |> list_at_index(payout_outputs_offset - 10)
+  } else {
+    list_at_index_step(outputs, payout_outputs_offset)
+  }
+}
+
+fn list_at_index_step(outputs: List<a>, current_index: Int) -> a {
+  if current_index <= 0 {
+    expect [output, ..] = outputs
+    output
+  } else {
+    outputs
+      |> builtin.tail_list
+      |> list_at_index_step(current_index - 1)
+  }
+}
+
+/// Small utility to skip 10 items in a list.
+/// Used by `list_at_index`.
+fn skip_10_items(some_list: List<a>) -> List<a> {
+  some_list
+    |> builtin.tail_list
+    |> builtin.tail_list
+    |> builtin.tail_list
+    |> builtin.tail_list
+    |> builtin.tail_list
+    |> builtin.tail_list
+    |> builtin.tail_list
+    |> builtin.tail_list
+    |> builtin.tail_list
+    |> builtin.tail_list
+}
+
+test test_list_at_index() {
+  let arr =
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+  expect list_at_index(arr, 0) == 0
+  expect list_at_index(arr, 1) == 1
+  expect list_at_index(arr, 2) == 2
+  expect list_at_index(arr, 3) == 3
+  expect list_at_index(arr, 4) == 4
+  expect list_at_index(arr, 5) == 5
+  expect list_at_index(arr, 6) == 6
+  expect list_at_index(arr, 7) == 7
+  expect list_at_index(arr, 8) == 8
+  expect list_at_index(arr, 9) == 9
+  expect list_at_index(arr, 10) == 10
+  expect list_at_index(arr, 11) == 11
+  True
+}
