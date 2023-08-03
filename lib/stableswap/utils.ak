@@ -199,16 +199,16 @@ pub fn must_parse_option(op: Option<a>) -> a {
 }
 
 pub fn list_at_index(outputs: List<a>, payout_outputs_offset: Int) -> a {
-  if payout_outputs_offset >= 10 {
+  if payout_outputs_offset >= 5 {
     outputs
-      |> skip_10_items
-      |> list_at_index(payout_outputs_offset - 10)
+      |> skip_5_items
+      |> list_at_index(payout_outputs_offset - 5)
   } else {
     list_at_index_step(outputs, payout_outputs_offset)
   }
 }
 
-fn list_at_index_step(outputs: List<a>, current_index: Int) -> a {
+pub fn list_at_index_step(outputs: List<a>, current_index: Int) -> a {
   if current_index <= 0 {
     expect [output, ..] = outputs
     output
@@ -219,15 +219,10 @@ fn list_at_index_step(outputs: List<a>, current_index: Int) -> a {
   }
 }
 
-/// Small utility to skip 10 items in a list.
+/// Small utility to skip 5 items in a list.
 /// Used by `list_at_index`.
-fn skip_10_items(some_list: List<a>) -> List<a> {
+fn skip_5_items(some_list: List<a>) -> List<a> {
   some_list
-    |> builtin.tail_list
-    |> builtin.tail_list
-    |> builtin.tail_list
-    |> builtin.tail_list
-    |> builtin.tail_list
     |> builtin.tail_list
     |> builtin.tail_list
     |> builtin.tail_list
@@ -235,9 +230,10 @@ fn skip_10_items(some_list: List<a>) -> List<a> {
     |> builtin.tail_list
 }
 
-test test_list_at_index() {
+/// big batch will have 8 order utxo, 1 pool utxo, some batcher utxo(usually is 1)
+test test_list_at_index_utxo_length() {
   let arr =
-    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
   expect list_at_index(arr, 0) == 0
   expect list_at_index(arr, 1) == 1
   expect list_at_index(arr, 2) == 2
@@ -248,7 +244,24 @@ test test_list_at_index() {
   expect list_at_index(arr, 7) == 7
   expect list_at_index(arr, 8) == 8
   expect list_at_index(arr, 9) == 9
-  expect list_at_index(arr, 10) == 10
-  expect list_at_index(arr, 11) == 11
+  True
+}
+
+/// list of length almost is 2 or 3
+test test_list_at_index_assets_length() {
+  let arr =
+    [0, 1, 2]
+  expect list_at_index(arr, 0) == 0
+  expect list_at_index(arr, 1) == 1
+  expect list_at_index(arr, 2) == 2
+  True
+}
+
+test test_list_at_index_step_assets_length() {
+  let arr =
+    [0, 1, 2]
+  expect list_at_index_step(arr, 0) == 0
+  expect list_at_index_step(arr, 1) == 1
+  expect list_at_index_step(arr, 2) == 2
   True
 }
