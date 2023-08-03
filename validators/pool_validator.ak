@@ -865,8 +865,10 @@ fn calculate_exchange(
     )
   let multiple_in = utils.list_at_index_step(multiples, in_index)
   let multiple_out = utils.list_at_index_step(multiples, out_index)
-  let multiple_balances_in = utils.list_at_index_step(multiple_balances, in_index)
-  let multiple_balances_out = utils.list_at_index_step(multiple_balances, out_index)
+  let multiple_balances_in =
+    utils.list_at_index_step(multiple_balances, in_index)
+  let multiple_balances_out =
+    utils.list_at_index_step(multiple_balances, out_index)
   let x = multiple_balances_in + amount_in * multiple_in
   let y = poolutils.get_y(in_index, out_index, x, multiple_balances, amp)
   let dy = multiple_balances_out - y
