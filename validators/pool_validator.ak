@@ -205,7 +205,6 @@ fn validate_apply_pool(
     list.length(user_inputs) == list.length(unique_input_indexes) && // @input_indexes and @user_inputs must have the same length
     // User Inputs and Outputs must have the same length
     list.length(sorted_users_inputs) == list.length(user_outputs)
-
   let value_balances_in =
     list.map(
       assets,
