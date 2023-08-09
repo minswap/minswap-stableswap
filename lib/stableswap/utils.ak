@@ -210,7 +210,8 @@ pub fn list_at_index(outputs: List<a>, payout_outputs_offset: Int) -> a {
 }
 
 pub fn list_at_index_step(outputs: List<a>, current_index: Int) -> a {
-  if current_index <= 0 {
+  expect current_index >= 0
+  if current_index == 0 {
     expect [output, ..] = outputs
     output
   } else {
@@ -265,4 +266,16 @@ test test_list_at_index_step_assets_length() {
   expect list_at_index_step(arr, 1) == 1
   expect list_at_index_step(arr, 2) == 2
   True
+}
+
+test test_list_at_index_assets_length_err() fail {
+  let arr =
+    [0, 1, 2]
+  list_at_index_step(arr, -1) == 0
+}
+
+test test_list_at_index_utxo_length_err() fail {
+  let arr =
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  list_at_index(arr, -1) == 0
 }
