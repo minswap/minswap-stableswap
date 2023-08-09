@@ -164,7 +164,7 @@ pub fn compare_list_with(
       }
     [x, ..xs] ->
       when arr2 is {
-        [] -> True
+        [] -> False
         [y, ..ys] -> predicate(x, y) && compare_list_with(xs, ys, predicate)
       }
   }
@@ -182,6 +182,7 @@ test test_compare_list_with() {
   let r1 = compare_list_with(arr1, arr2, fn(a1, a2) { a1 <= a2 })
   let r2 = compare_list_with(arr1, arr3, fn(a1, a2) { a1 < a2 })
   let r3 = compare_list_with(arr1, arr4, fn(a1, a2) { a1 <= a2 })
+  let r4 = compare_list_with(arr4, arr1, fn(a1, a2) { a1 == a2 })
   let not_over_slippage =
     compare_list_with(
       [10, 10, 10],
@@ -190,7 +191,7 @@ test test_compare_list_with() {
       // minimumAmount
       fn(actual, expt) { actual >= expt },
     )
-  r1 && r2 && !r3 && !not_over_slippage
+  r1 && r2 && !r3 && !not_over_slippage && !r4
 }
 
 pub fn must_parse_option(op: Option<a>) -> a {
