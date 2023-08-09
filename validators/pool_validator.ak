@@ -180,6 +180,7 @@ fn validate_apply_pool(
         }
       },
     )
+  let unique_input_indexes = list.unique(input_indexes)
 
   // Currently, transaction inputs will be sorted by TxId and TxIndex of UTxO.
   // We have to calculate indexes of orders inputs sorting by the ASC created time
@@ -187,7 +188,7 @@ fn validate_apply_pool(
   // Input Indexes in parameter will be reversed indexs of @user_inputs to reduce calculate step in On-Chain
   let sorted_users_inputs =
     list.foldl(
-      input_indexes,
+      unique_input_indexes,
       [],
       fn(idx, ips) { list.push(ips, utils.list_at_index(user_inputs, idx)) },
     )
@@ -199,6 +200,11 @@ fn validate_apply_pool(
         addr != pool_in_address && addr != batcher_address
       },
     )
+  expect
+    unique_input_indexes == input_indexes && // @input_indexes which is provided by Batcher must be unique array
+    list.length(user_inputs) == list.length(unique_input_indexes) && // @input_indexes and @user_inputs must have the same length
+    // User Inputs and Outputs must have the same length
+    list.length(sorted_users_inputs) == list.length(user_outputs)
   let value_balances_in =
     list.map(
       assets,
@@ -221,7 +227,6 @@ fn validate_apply_pool(
     assets_length == list.length(pool_in_balances) && assets_length == list.length(
       pool_out_balances,
     )
-  expect list.length(sorted_users_inputs) == list.length(user_outputs)
   let (new_datum_balances, new_value_balances, new_total_liquidity) =
     apply_orders(
       all_outputs: outputs,
@@ -267,45 +272,20 @@ fn validate_withdraw_admin_fee(
   admin_index: Int,
   fee_to_index: Int,
 ) -> Bool {
-  let Transaction { inputs, outputs, mint, datums, .. } = transaction
+  let Transaction { inputs, outputs, mint, datums, redeemers, .. } = transaction
   let PoolParams { nft_asset, assets, admin_asset, .. } = params
   let Input { output: pool_in_output, .. } = pool_input
   let Output { address: pool_in_address, value: pool_in_value, .. } =
     pool_in_output
-  let Address { payment_credential: pool_in_address_payment_credential, .. } =
-    pool_in_address
 
-  // - The validation requires having only a single Pool Input and a Pool Output in single batching transaction
+  // - The validation requires having only a single Pool Output
   // - The Pool Input and Output must have the same Address (both payment and stake credential part)
-  // - The idea here is that we will find the output having the same address with the spending input and 
-  //   make sure that there's only one input and one output matching with pool's payment_credential
   expect [pool_output] =
     list.filter(outputs, fn(o) { o.address == pool_in_address })
   let Output { value: pool_out_value, .. } = pool_output
 
   // Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
-  expect [_] =
-    list.filter(
-      inputs,
-      fn(i) {
-        let Input { output: out, .. } = i
-        let Output { address: addr, .. } = out
-        let Address { payment_credential, .. } = addr
-        payment_credential == pool_in_address_payment_credential
-      },
-    )
-  expect [_] =
-    list.filter(
-      inputs,
-      fn(i) {
-        let Input { output: Output { datum, .. }, .. } = i
-        when datum is {
-          NoDatum -> False
-          _ -> True
-        }
-      },
-    )
-
+  expect dict.size(redeemers) == 1
   expect pool_out_datum: PoolDatum =
     must_find_script_datum(outputs, datums, pool_output)
 
@@ -382,7 +362,7 @@ fn validate_update_amp_or_update_stake_credential(
   pool_in_datum: PoolDatum,
   admin_index: Int,
 ) -> Bool {
-  let Transaction { inputs, outputs, mint, datums, .. } = transaction
+  let Transaction { inputs, outputs, mint, datums, redeemers, .. } = transaction
   let PoolParams { nft_asset, assets, admin_asset, .. } = params
   let Input { output: pool_in_output, .. } = pool_input
   let Output { address: pool_in_address, value: pool_in_value, .. } =
@@ -390,10 +370,10 @@ fn validate_update_amp_or_update_stake_credential(
   let Address { payment_credential: pool_in_address_payment_credential, .. } =
     pool_in_address
 
-  // - The validation requires having only a single Pool Input and a Pool Output in single batching transaction
+  // - The validation requires having only a single Pool Output
   // - The Pool Input and Output must have the same Address (only payment_credential part)
   // - Admin can do either update AMP or update stake_credential in this redeemer
-  // - We also make sure that there's only one input and one output matching with pool's payment_credential
+  // - We also make sure that there's only one output matching with pool's payment_credential
   expect [pool_output] =
     list.filter(
       outputs,
@@ -406,28 +386,7 @@ fn validate_update_amp_or_update_stake_credential(
   let Output { value: pool_out_value, .. } = pool_output
 
   // Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
-  expect [_] =
-    list.filter(
-      inputs,
-      fn(i) {
-        let Input { output: out, .. } = i
-        let Output { address: addr, .. } = out
-        let Address { payment_credential, .. } = addr
-        payment_credential == pool_in_address_payment_credential
-      },
-    )
-  expect [_] =
-    list.filter(
-      inputs,
-      fn(i) {
-        let Input { output: Output { datum, .. }, .. } = i
-        when datum is {
-          NoDatum -> False
-          _ -> True
-        }
-      },
-    )
-
+  expect dict.size(redeemers) == 1
   expect pool_out_datum: PoolDatum =
     must_find_script_datum(outputs, datums, pool_output)
 
