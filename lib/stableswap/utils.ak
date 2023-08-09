@@ -164,7 +164,7 @@ pub fn compare_list_with(
       }
     [x, ..xs] ->
       when arr2 is {
-        [] -> True
+        [] -> False
         [y, ..ys] -> predicate(x, y) && compare_list_with(xs, ys, predicate)
       }
   }
@@ -182,6 +182,7 @@ test test_compare_list_with() {
   let r1 = compare_list_with(arr1, arr2, fn(a1, a2) { a1 <= a2 })
   let r2 = compare_list_with(arr1, arr3, fn(a1, a2) { a1 < a2 })
   let r3 = compare_list_with(arr1, arr4, fn(a1, a2) { a1 <= a2 })
+  let r4 = compare_list_with(arr4, arr1, fn(a1, a2) { a1 == a2 })
   let not_over_slippage =
     compare_list_with(
       [10, 10, 10],
@@ -190,7 +191,7 @@ test test_compare_list_with() {
       // minimumAmount
       fn(actual, expt) { actual >= expt },
     )
-  r1 && r2 && !r3 && !not_over_slippage
+  r1 && r2 && !r3 && !not_over_slippage && !r4
 }
 
 pub fn must_parse_option(op: Option<a>) -> a {
@@ -199,17 +200,18 @@ pub fn must_parse_option(op: Option<a>) -> a {
 }
 
 pub fn list_at_index(outputs: List<a>, payout_outputs_offset: Int) -> a {
-  if payout_outputs_offset >= 10 {
+  if payout_outputs_offset >= 5 {
     outputs
-      |> skip_10_items
-      |> list_at_index(payout_outputs_offset - 10)
+      |> skip_5_items
+      |> list_at_index(payout_outputs_offset - 5)
   } else {
     list_at_index_step(outputs, payout_outputs_offset)
   }
 }
 
-fn list_at_index_step(outputs: List<a>, current_index: Int) -> a {
-  if current_index <= 0 {
+pub fn list_at_index_step(outputs: List<a>, current_index: Int) -> a {
+  expect current_index >= 0
+  if current_index == 0 {
     expect [output, ..] = outputs
     output
   } else {
@@ -219,15 +221,10 @@ fn list_at_index_step(outputs: List<a>, current_index: Int) -> a {
   }
 }
 
-/// Small utility to skip 10 items in a list.
+/// Small utility to skip 5 items in a list.
 /// Used by `list_at_index`.
-fn skip_10_items(some_list: List<a>) -> List<a> {
+fn skip_5_items(some_list: List<a>) -> List<a> {
   some_list
-    |> builtin.tail_list
-    |> builtin.tail_list
-    |> builtin.tail_list
-    |> builtin.tail_list
-    |> builtin.tail_list
     |> builtin.tail_list
     |> builtin.tail_list
     |> builtin.tail_list
@@ -235,9 +232,10 @@ fn skip_10_items(some_list: List<a>) -> List<a> {
     |> builtin.tail_list
 }
 
-test test_list_at_index() {
+/// big batch will have 8 order utxo, 1 pool utxo, some batcher utxo(usually is 1)
+test test_list_at_index_utxo_length() {
   let arr =
-    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
   expect list_at_index(arr, 0) == 0
   expect list_at_index(arr, 1) == 1
   expect list_at_index(arr, 2) == 2
@@ -248,7 +246,42 @@ test test_list_at_index() {
   expect list_at_index(arr, 7) == 7
   expect list_at_index(arr, 8) == 8
   expect list_at_index(arr, 9) == 9
-  expect list_at_index(arr, 10) == 10
-  expect list_at_index(arr, 11) == 11
   True
+}
+
+/// list of length almost is 2 or 3
+test test_list_at_index_assets_length() {
+  let arr =
+    [0, 1, 2]
+  expect list_at_index(arr, 0) == 0
+  expect list_at_index(arr, 1) == 1
+  expect list_at_index(arr, 2) == 2
+  True
+}
+
+test test_list_at_index_step_assets_length() {
+  let arr =
+    [0, 1, 2]
+  expect list_at_index_step(arr, 0) == 0
+  expect list_at_index_step(arr, 1) == 1
+  expect list_at_index_step(arr, 2) == 2
+  True
+}
+
+test test_list_at_index_step_negative_index_err() fail {
+  let arr =
+    [0, 1, 2]
+  list_at_index_step(arr, -1) == 0
+}
+
+test test_list_at_index_negative_index_err() fail {
+  let arr =
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  list_at_index(arr, -1) == 0
+}
+
+test test_list_at_index_index_higher_length_err() fail {
+  let arr =
+    [0, 1, 2]
+  list_at_index(arr, 3) == 0
 }

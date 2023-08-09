@@ -822,10 +822,12 @@ fn calculate_exchange(
       multiples,
       fn(balance, multiple) { balance * multiple },
     )
-  let multiple_in = utils.list_at_index(multiples, in_index)
-  let multiple_out = utils.list_at_index(multiples, out_index)
-  let multiple_balances_in = utils.list_at_index(multiple_balances, in_index)
-  let multiple_balances_out = utils.list_at_index(multiple_balances, out_index)
+  let multiple_in = utils.list_at_index_step(multiples, in_index)
+  let multiple_out = utils.list_at_index_step(multiples, out_index)
+  let multiple_balances_in =
+    utils.list_at_index_step(multiple_balances, in_index)
+  let multiple_balances_out =
+    utils.list_at_index_step(multiple_balances, out_index)
   let x = multiple_balances_in + amount_in * multiple_in
   let y = poolutils.get_y(in_index, out_index, x, multiple_balances, amp)
   let dy = multiple_balances_out - y
@@ -880,9 +882,9 @@ fn validate_exchange(
 ) -> (List<Int>, List<Int>, Int) {
   let (datum_balances, value_balances, total_liquidity) = pool_state
   let Asset { policy_id: asset_in_policy_id, asset_name: asset_in_asset_name } =
-    utils.list_at_index(assets, in_index)
+    utils.list_at_index_step(assets, in_index)
   let Asset { policy_id: asset_out_policy_id, asset_name: asset_out_asset_name } =
-    utils.list_at_index(assets, out_index)
+    utils.list_at_index_step(assets, out_index)
   let amount_in =
     value.quantity_of(order_in_value, asset_in_policy_id, asset_in_asset_name)
   let (amount_out, new_datum_balances, new_value_balances) =
@@ -1057,9 +1059,9 @@ fn calculate_withdraw_one_coin(
   let d0 = poolutils.get_d(multiple_balances, amp)
   let d1 = d0 - amount_lp_in * d0 / total_liquidity
   let new_y = poolutils.get_y_d(out_index, multiple_balances, amp, d1)
-  let multiple_out = utils.list_at_index(multiples, out_index)
+  let multiple_out = utils.list_at_index_step(multiples, out_index)
   let out_amount_without_fee =
-    ( utils.list_at_index(multiple_balances, out_index) - new_y ) / multiple_out
+    ( utils.list_at_index_step(multiple_balances, out_index) - new_y ) / multiple_out
   let assets_length = list.length(datum_balances)
   let special_fee = fee * assets_length / ( 4 * ( assets_length - 1 ) )
   let multiple_balances_reduced =
@@ -1077,7 +1079,7 @@ fn calculate_withdraw_one_coin(
     )
   let out_amount =
     (
-      utils.list_at_index(multiple_balances_reduced, out_index) - poolutils.get_y_d(
+      utils.list_at_index_step(multiple_balances_reduced, out_index) - poolutils.get_y_d(
         out_index,
         multiple_balances_reduced,
         amp,
@@ -1103,7 +1105,7 @@ fn validate_withdraw_one_coin(
   pool_state: (List<Int>, List<Int>, Int),
 ) -> (List<Int>, List<Int>, Int) {
   let (datum_balances, value_balances, total_liquidity) = pool_state
-  let asset_out = utils.list_at_index(assets, out_index)
+  let asset_out = utils.list_at_index_step(assets, out_index)
   let Asset { policy_id: lp_policy_id, asset_name: lp_asset_name } = lp_asset
   let amount_lp_in =
     value.quantity_of(order_in_value, lp_policy_id, lp_asset_name)
