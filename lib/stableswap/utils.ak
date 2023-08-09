@@ -268,14 +268,20 @@ test test_list_at_index_step_assets_length() {
   True
 }
 
-test test_list_at_index_assets_length_err() fail {
+test test_list_at_index_step_negative_index_err() fail {
   let arr =
     [0, 1, 2]
   list_at_index_step(arr, -1) == 0
 }
 
-test test_list_at_index_utxo_length_err() fail {
+test test_list_at_index_negative_index_err() fail {
   let arr =
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
   list_at_index(arr, -1) == 0
+}
+
+test test_list_at_index_index_higher_length_err() fail {
+  let arr =
+    [0, 1, 2]
+  list_at_index(arr, 3) == 0
 }
