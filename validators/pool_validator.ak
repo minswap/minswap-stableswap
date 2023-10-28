@@ -29,7 +29,8 @@ validator(params: PoolParams) {
     expect Spend(pool_ref) = purpose
     expect Some(pool_input) = transaction.find_input(inputs, pool_ref)
     when redeemer is {
-      ApplyPool(batcher_address, input_indexes, license_idx) ->
+      ApplyPool(batcher_address, input_indexes, license_idx) -> {
+        expect list.length(input_indexes) > 0
         validate_apply_pool(
           params: params,
           transaction: transaction,
@@ -39,6 +40,7 @@ validator(params: PoolParams) {
           input_indexes: input_indexes,
           license_idx: license_idx,
         )
+      }
       WithdrawAdminFee(admin_index, fee_to_index) ->
         validate_withdraw_admin_fee(
           params: params,
