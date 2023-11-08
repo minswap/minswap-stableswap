@@ -1,3 +1,4 @@
+use aiken/builtin
 use aiken/dict.{Dict}
 use aiken/hash.{Blake2b_256, Hash}
 use aiken/interval.{Finite}
@@ -30,7 +31,7 @@ validator(params: PoolParams) {
     expect Some(pool_input) = transaction.find_input(inputs, pool_ref)
     when redeemer is {
       ApplyPool(batcher_address, input_indexes, license_idx) -> {
-        expect list.length(input_indexes) > 0
+        expect !builtin.null_list(input_indexes)
         validate_apply_pool(
           params: params,
           transaction: transaction,
