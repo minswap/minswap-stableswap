@@ -10,7 +10,7 @@ use aiken/transaction.{
 use aiken/transaction/credential.{
   Address, ScriptCredential, VerificationKeyCredential,
 }
-use aiken/transaction/value.{PolicyId, Value}
+use aiken/transaction/value.{PolicyId, Value, ada_asset_name, ada_policy_id}
 use stableswap/pool_utils as poolutils
 use stableswap/types.{
   ApplyPool, Asset, Deposit, Exchange, OrderDatum, PoolDatum, PoolParams,
@@ -145,16 +145,17 @@ fn validate_apply_pool(
   // - Pool NFT is the part of Pool Value, which is known as Pool Identifier
   // - Pool NFT must be existed on both Pool In/Output Value
   let Asset { policy_id: nft_policy_id, asset_name: nft_asset_name } = nft_asset
-
-  // Pool NFT must be existed in Pool Input and Output value
-  expect value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1
-  expect value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1
-  // Pool Value must only contains necessary token inside
-  expect check_pool_value(pool_out_value, assets)
-  // In @ApplyPool Redeemer, only balances and total_liquidity can be changed.
-  // The Amplification Coeffience & Order Hash must be unchanged. Amplification Coeffience can only be update via @UpdateAmp redeemer
-  expect
-    pool_in_amp == pool_out_amp && pool_in_order_hash == pool_out_order_hash
+  expect and {
+      // Pool NFT must be existed in Pool Input and Output value
+      value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1,
+      value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1,
+      // Pool Value must only contains necessary token inside
+      check_pool_value(pool_out_value, assets),
+      // In @ApplyPool Redeemer, only balances and total_liquidity can be changed.
+      // The Amplification Coeffience & Order Hash must be unchanged. Amplification Coeffience can only be update via @UpdateAmp redeemer
+      pool_in_amp == pool_out_amp,
+      pool_in_order_hash == pool_out_order_hash,
+    }
   let license_input = utils.list_at_index(inputs, license_idx)
   let license_deadline =
     find_license_deadline(license_symbol, license_input.output.value)
@@ -168,8 +169,11 @@ fn validate_apply_pool(
     batcher_address
   expect VerificationKeyCredential(batcher_pkh) = batcher_payment_credential
   // Batcher with valid license token must be a signer of transaction
-  expect
-    list.has(extra_signatories, batcher_pkh) && license_deadline >= end_valid_time_range && license_deadline <= start_valid_time_range + maximum_deadline_range
+  expect and {
+      list.has(extra_signatories, batcher_pkh),
+      license_deadline >= end_valid_time_range,
+      license_deadline <= start_valid_time_range + maximum_deadline_range,
+    }
   let user_inputs =
     list.filter(
       inputs,
@@ -183,7 +187,6 @@ fn validate_apply_pool(
         }
       },
     )
-  let unique_input_indexes = list.unique(input_indexes)
 
   // Currently, transaction inputs will be sorted by TxId and TxIndex of UTxO.
   // We have to calculate indexes of orders inputs sorting by the ASC created time
@@ -191,7 +194,7 @@ fn validate_apply_pool(
   // Input Indexes in parameter will be reversed indexs of @user_inputs to reduce calculate step in On-Chain
   let sorted_users_inputs =
     list.foldl(
-      unique_input_indexes,
+      input_indexes,
       [],
       fn(idx, ips) { list.push(ips, utils.list_at_index(user_inputs, idx)) },
     )
@@ -203,11 +206,18 @@ fn validate_apply_pool(
         addr != pool_in_address && addr != batcher_address
       },
     )
-  expect
-    unique_input_indexes == input_indexes && // @input_indexes which is provided by Batcher must be unique array
-    list.length(user_inputs) == list.length(unique_input_indexes) && // @input_indexes and @user_inputs must have the same length
-    // User Inputs and Outputs must have the same length
-    list.length(sorted_users_inputs) == list.length(user_outputs)
+
+  expect and {
+      // @input_indexes which is provided by Batcher must be unique array
+      utils.is_list_unique(input_indexes),
+      // @input_indexes and @user_inputs must have the same length
+      utils.compare_list_length(input_indexes, user_inputs),
+      // User Inputs and Outputs must have the same length
+      list.length(sorted_users_inputs) == list.length(user_outputs),
+      // Balances list in Pool In/Out datum must have the same length with Pool Assets list
+      utils.compare_list_length(assets, pool_in_balances),
+      utils.compare_list_length(assets, pool_out_balances),
+    }
   let value_balances_in =
     list.map(
       assets,
@@ -224,13 +234,7 @@ fn validate_apply_pool(
         value.quantity_of(pool_out_value, policy_id, asset_name)
       },
     )
-  let assets_length = list.length(assets)
-  // Balances list in Pool In/Out datum must have the same length with Pool Assets list
-  expect
-    assets_length == list.length(pool_in_balances) && assets_length == list.length(
-      pool_out_balances,
-    )
-  let (new_datum_balances, new_value_balances, new_total_liquidity) =
+  let pool_out_state =
     apply_orders(
       all_outputs: outputs,
       datum_dict: datums,
@@ -245,25 +249,22 @@ fn validate_apply_pool(
       fee_denominator: fee_denominator,
       pool_state: (pool_in_balances, value_balances_in, pool_in_total_liquidity),
     )
-
-  // Validate the Pool State (datum balances, value balances and total_liquidity) must be the same with the calculated amount after applying through all orders
-  expect
-    value_balances_out == new_value_balances && pool_out_balances == new_datum_balances && pool_out_total_liquidity == new_total_liquidity
-  let mint_value = value.from_minted_value(mint)
-  let mint_length = list.length(value.flatten(mint_value))
-  let total_delta_liquidity = pool_out_total_liquidity - pool_in_total_liquidity
   let Asset { policy_id: lp_policy_id, asset_name: lp_asset_name } = lp_asset
-
-  // Validate that @mint can only contains LP Token if having any order requires minting LP, otherwise, it must be empty
-  expect
-    if total_delta_liquidity != 0 {
-      mint_length == 1
-    } else {
-      mint_length == 0
-    }
-  expect
-    value.quantity_of(mint_value, lp_policy_id, lp_asset_name) == total_delta_liquidity
-  True
+  let total_delta_liquidity = pool_out_total_liquidity - pool_in_total_liquidity
+  let expected_mint =
+    value.zero()
+      |> value.add(lp_policy_id, lp_asset_name, total_delta_liquidity)
+  // Validate the Pool State (datum balances, value balances and total_liquidity) must be the same with the calculated amount after applying through all orders
+  and {
+    // value_balances_out == new_value_balances && pool_out_balances == new_datum_balances && pool_out_total_liquidity == new_total_liquidity
+    pool_out_state == (
+      pool_out_balances,
+      value_balances_out,
+      pool_out_total_liquidity,
+    ),
+    // Validate that @mint can only contains LP Token if having any order requires minting LP, otherwise, it must be empty
+    value.from_minted_value(mint) == expected_mint,
+  }
 }
 
 // This function will trigger validation of WithdrawAdminFee redeemer
@@ -287,8 +288,6 @@ fn validate_withdraw_admin_fee(
     list.filter(outputs, fn(o) { o.address == pool_in_address })
   let Output { value: pool_out_value, .. } = pool_output
 
-  // Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
-  expect dict.size(redeemers) == 1
   expect pool_out_datum: PoolDatum =
     must_find_script_datum(outputs, datums, pool_output)
 
@@ -298,13 +297,6 @@ fn validate_withdraw_admin_fee(
   // - Pool NFT must be existed on both Pool In/Output Value
   let Asset { policy_id: nft_policy_id, asset_name: nft_asset_name } = nft_asset
 
-  // Pool NFT must be existed in Pool Input and Output value
-  expect value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1
-  expect value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1
-  // Pool Value must only contains necessary token inside
-  expect check_pool_value(pool_out_value, assets)
-  // Pool Datum must be unchanged in this redeemer
-  expect pool_in_datum == pool_out_datum
   let value_balances_in =
     list.map(
       assets,
@@ -321,8 +313,19 @@ fn validate_withdraw_admin_fee(
         value.quantity_of(pool_out_value, policy_id, asset_name)
       },
     )
-  // After Admin Fee amounts are withdrawn, Pool Value must be equals with Datum balances
-  expect value_balances_out == pool_in_balances
+  expect and {
+      // Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
+      dict.size(redeemers) == 1,
+      // Pool NFT must be existed in Pool Input and Output value
+      value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1,
+      value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1,
+      // Pool Value must only contains necessary token inside
+      check_pool_value(pool_out_value, assets),
+      // Pool Datum must be unchanged in this redeemer
+      pool_in_datum == pool_out_datum,
+      // After Admin Fee amounts are withdrawn, Pool Value must be equals with Datum balances
+      value_balances_out == pool_in_balances,
+    }
   // - Admin Fee amounts are the amounts belonged to Admin 
   // - These amounts are accumulated in Pool Value and 
   //   are calculated by the diff of Pool Value and Datum Balances 
@@ -348,13 +351,12 @@ fn validate_withdraw_admin_fee(
   let Asset { policy_id: admin_policy_id, asset_name: admin_asset_name } =
     admin_asset
 
-  // Only Admin token can trigger this redeemer
-  expect value.quantity_of(admin_value, admin_policy_id, admin_asset_name) == 1
-  let mint_value = value.from_minted_value(mint)
-  // This Redeemer won't mint anything 
-  expect [] = value.flatten(mint_value)
-
-  True
+  and {
+    // Only Admin token can trigger this redeemer
+    value.quantity_of(admin_value, admin_policy_id, admin_asset_name) == 1,
+    // This Redeemer won't mint anything 
+    value.is_zero(value.from_minted_value(mint)),
+  }
 }
 
 // This function will trigger validation of UpdateAmpOrStakeCredential redeemer
@@ -388,8 +390,6 @@ fn validate_update_amp_or_update_stake_credential(
     )
   let Output { value: pool_out_value, .. } = pool_output
 
-  // Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
-  expect dict.size(redeemers) == 1
   expect pool_out_datum: PoolDatum =
     must_find_script_datum(outputs, datums, pool_output)
 
@@ -410,15 +410,21 @@ fn validate_update_amp_or_update_stake_credential(
   // - Pool NFT is the part of Pool Value, which is known as Pool Identifier
   // - Pool NFT must be existed on both Pool In/Output Value
   let Asset { policy_id: nft_policy_id, asset_name: nft_asset_name } = nft_asset
-  // Pool NFT must be existed in Pool Input and Output value
-  expect value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1
-  expect value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1
-  // Pool Value must only contains necessary token inside
-  expect check_pool_value(pool_out_value, assets)
-  // - Only Pool Datum's AMP can be updated, other fields must remain unchanged
-  // - TODO: Research the acceptable range which AMP can be changed
-  expect
-    pool_in_balances == pool_out_balances && pool_in_total_liquidity == pool_out_total_liquidity && pool_in_order_hash == pool_out_order_hash
+
+  expect and {
+      // Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
+      dict.size(redeemers) == 1,
+      // Pool NFT must be existed in Pool Input and Output value
+      value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1,
+      value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1,
+      // Pool Value must only contains necessary token inside
+      check_pool_value(pool_out_value, assets),
+      // - Only Pool Datum's AMP can be updated, other fields must remain unchanged
+      // - TODO: Research the acceptable range which AMP can be changed
+      pool_in_balances == pool_out_balances,
+      pool_in_total_liquidity == pool_out_total_liquidity,
+      pool_in_order_hash == pool_out_order_hash,
+    }
   let value_balances_in =
     list.map(
       assets,
@@ -441,13 +447,12 @@ fn validate_update_amp_or_update_stake_credential(
   let admin_value = admin_input.output.value
   let Asset { policy_id: admin_policy_id, asset_name: admin_asset_name } =
     admin_asset
-  // Only Admin token can trigger this redeemer
-  expect value.quantity_of(admin_value, admin_policy_id, admin_asset_name) == 1
-  let mint_value = value.from_minted_value(mint)
-  // This Redeemer won't mint anything 
-  expect [] = value.flatten(mint_value)
-
-  True
+  and {
+    // Only Admin token can trigger this redeemer
+    value.quantity_of(admin_value, admin_policy_id, admin_asset_name) == 1,
+    // This Redeemer won't mint anything
+    value.is_zero(value.from_minted_value(mint)),
+  }
 }
 
 fn find_order_datum(
@@ -505,8 +510,12 @@ fn apply_orders(
               None -> order_output_datum == NoDatum
             }
           // Verify Order Datum is correct
-          expect
-            receiver == output_address && batcher_fee > 0 && output_ada > 0 && is_valid_receiver_datum_hash
+          expect and {
+              receiver == output_address,
+              batcher_fee > 0,
+              output_ada > 0,
+              is_valid_receiver_datum_hash,
+            }
           let new_state =
             when order_step is {
               Exchange(asset_in_index, asset_out_index, minimum_asset_out) -> {
@@ -722,20 +731,16 @@ fn validate_deposit(
       value_balances: value_balances,
       total_liquidity: total_liquidity,
     )
-  let amount_lp_out =
-    value.quantity_of(order_out_value, lp_policy_id, lp_asset_name)
-  let amount_ada_out =
-    value.quantity_of(
-      order_out_value,
-      value.ada_policy_id,
-      value.ada_asset_name,
-    )
-  // Make sure that the actual lp amount will be minted must be greater than the minimum acceptance of this order
-  expect lp_amount >= minimum_lp
-  // Verify the amount will be returned to users must be followed by the calculation above
-  expect lp_amount == amount_lp_out && amount_ada_out == output_ada
-  // Verify the output will be returned to users must contains only necessary tokens
-  expect list.length(value.flatten(order_out_value)) == 2
+  let expected_order_out_value =
+    value.zero()
+      |> value.add(ada_policy_id, ada_asset_name, output_ada)
+      |> value.add(lp_policy_id, lp_asset_name, lp_amount)
+  expect and {
+      // Make sure that the actual lp amount will be minted must be greater than the minimum acceptance of this order
+      lp_amount >= minimum_lp,
+      // Verify the amount will be returned to users must be followed by the calculation above
+      expected_order_out_value == order_out_value,
+    }
   (new_datum_balances, new_value_balances, total_liquidity + lp_amount)
 }
 
@@ -903,24 +908,17 @@ fn validate_exchange(
       datum_balances: datum_balances,
       value_balances: value_balances,
     )
-  // Make sure that the actual asset amount must be greater than the minimum acceptance of this order
-  expect amount_out >= minimum_amount_out
-  let asset_amount_out =
-    value.quantity_of(
-      order_out_value,
-      asset_out_policy_id,
-      asset_out_asset_name,
-    )
-  let amount_ada_out =
-    value.quantity_of(
-      order_out_value,
-      value.ada_policy_id,
-      value.ada_asset_name,
-    )
-  // Verify the amount will be returned to users must be followed by the calculation above
-  expect asset_amount_out == amount_out && amount_ada_out == output_ada
-  // Verify the output will be returned to users must contains only necessary tokens
-  expect list.length(value.flatten(order_out_value)) == 2
+  let expected_order_out_value =
+    value.zero()
+      |> value.add(ada_policy_id, ada_asset_name, output_ada)
+      |> value.add(asset_out_policy_id, asset_out_asset_name, amount_out)
+  expect and {
+      amount_in > 0,
+      // Make sure that the actual asset amount must be greater than the minimum acceptance of this order
+      amount_out >= minimum_amount_out,
+      // Verify the amount will be returned to users must be followed by the calculation above and contains only necessary tokens
+      order_out_value == expected_order_out_value,
+    }
   (new_datum_balances, new_value_balances, total_liquidity)
 }
 
@@ -987,7 +985,10 @@ fn validate_withdraw_imbalance(
   let necessary_lp_amount = total_liquidity * ( d0 - d2 ) / d0 + 1
 
   // Make sure that the nessesary lp amount must be positive and less than the LP of this order
-  expect necessary_lp_amount > 1 && withdrawal_lp_amount >= necessary_lp_amount
+  expect and {
+      necessary_lp_amount > 1,
+      withdrawal_lp_amount >= necessary_lp_amount,
+    }
   let asset_amounts_out =
     list.map(
       assets,
@@ -1006,8 +1007,11 @@ fn validate_withdraw_imbalance(
     value.quantity_of(order_out_value, lp_policy_id, lp_asset_name)
 
   // Verify the amount will be returned to users must be followed by the calculation above
-  expect
-    amounts_out == asset_amounts_out && amount_ada_out == output_ada && change_lp_amount == withdrawal_lp_amount - necessary_lp_amount
+  expect and {
+      amounts_out == asset_amounts_out,
+      amount_ada_out == output_ada,
+      change_lp_amount == withdrawal_lp_amount - necessary_lp_amount,
+    }
   let new_value_balances =
     utils.zip_with(
       value_balances,
@@ -1112,6 +1116,7 @@ fn validate_withdraw_one_coin(
   let Asset { policy_id: lp_policy_id, asset_name: lp_asset_name } = lp_asset
   let amount_lp_in =
     value.quantity_of(order_in_value, lp_policy_id, lp_asset_name)
+  expect amount_lp_in > 0
   let (amount_out, fee_amount) =
     calculate_withdraw_one_coin(
       multiples: multiples,

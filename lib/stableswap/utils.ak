@@ -1,5 +1,6 @@
 use aiken/builtin
 use aiken/bytearray
+use aiken/cbor
 use aiken/list
 use aiken/string
 
@@ -65,6 +66,8 @@ test test_bytearray_to_int() {
   r1 == 123 && r2 == 111
 }
 
+// This function with zip 2 list with @predicate condition
+// It expects 2 lists must having the same length, otherwise it will throw error
 pub fn zip_with(
   arr1: List<a>,
   arr2: List<a>,
@@ -79,8 +82,7 @@ pub fn zip_with(
       }
     [x, ..xs] ->
       when arr2 is {
-        [] ->
-          []
+        [] -> fail
         [y, ..ys] ->
           [predicate(x, y), ..zip_with(xs, ys, predicate)]
       }
@@ -97,12 +99,24 @@ test test_zip_with() {
   z1 == [5, 7, 9] && z2 == [4, 10, 18]
 }
 
-test test_zip_with_throw_err() fail {
+test test_zip_with_throw_err_1() fail {
   let arr1 =
     [1, 2, 3]
   let arr2 =
     [4, 5, 6, 6]
-  zip_with(arr1, arr2, fn(a1, a2) { a1 + a2 }) == []
+  let x = zip_with(arr1, arr2, fn(a1, a2) { a1 + a2 })
+  trace cbor.diagnostic(x)
+  True
+}
+
+test test_zip_with_throw_err_2() fail {
+  let arr1 =
+    [1, 2, 3]
+  let arr2 =
+    [4, 5, 6, 6]
+  let x = zip_with(arr2, arr1, fn(a1, a2) { a1 + a2 })
+  trace cbor.diagnostic(x)
+  True
 }
 
 pub fn verify_positive_ints(arr: List<Int>) -> Bool {
@@ -284,4 +298,85 @@ test test_list_at_index_index_higher_length_err() fail {
   let arr =
     [0, 1, 2]
   list_at_index(arr, 3) == 0
+}
+
+pub fn compare_list_length(arr1: List<a>, arr2: List<b>) -> Bool {
+  when arr1 is {
+    [] -> arr2 == []
+    _ ->
+      when arr2 is {
+        [] -> False
+        _ ->
+          compare_list_length(
+            arr1 |> builtin.tail_list,
+            arr2 |> builtin.tail_list,
+          )
+      }
+  }
+}
+
+test test_compare_list_length() {
+  let arr1 =
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+  let arr2 =
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+  compare_list_length(arr1, arr2)
+}
+
+test test_compare_list_length_1() {
+  let arr1 =
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+  let arr2 =
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+  and {
+    !compare_list_length(arr1, arr2),
+    !compare_list_length(arr2, arr1),
+  }
+}
+
+test test_compare_list_length_2() {
+  compare_list_length([], [])
+}
+
+test test_compare_list_length_3() {
+  let arr1 =
+    [1]
+  let arr2 =
+    []
+  and {
+    !compare_list_length(arr1, arr2),
+    !compare_list_length(arr2, arr1),
+  }
+}
+
+fn contains_element(list: List<a>, elem: a) -> Bool {
+  when list is {
+    [] -> False
+    [x, ..xs] -> elem == x || contains_element(xs, elem)
+  }
+}
+
+pub fn is_list_unique(list: List<a>) -> Bool {
+  when list is {
+    [] -> True
+    [_] -> True
+    [x, ..xs] -> !contains_element(xs, x) && is_list_unique(xs)
+  }
+}
+
+test test_is_list_unique() {
+  let arr1 =
+    []
+  let arr2 =
+    [10]
+  let arr3 =
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  let arr4 =
+    [0, 0, 2, 3, 4, 5, 6, 7, 8, 9]
+  and {
+    is_list_unique(arr1),
+    is_list_unique(arr2),
+    is_list_unique(arr3),
+    !is_list_unique(arr4),
+  }
 }
