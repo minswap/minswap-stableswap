@@ -7,6 +7,8 @@ use aiken/string
 use aiken/transaction.{Datum, DatumHash, InlineDatum, NoDatum}
 use stableswap/types.{DatumMap}
 
+pub const max_lp_supply = 9223372036854775807
+
 const minus_ascii_code = 45
 
 const zero_ascii_code = 48
@@ -118,6 +120,58 @@ test test_zip_with_throw_err_2() fail {
   let arr2 =
     [4, 5, 6, 6]
   let x = zip_with(arr2, arr1, fn(a1, a2) { a1 + a2 })
+  trace cbor.diagnostic(x)
+  True
+}
+
+// This function with zip 2 list with @predicate condition and initial variable
+// It expects 2 lists must having the same length, otherwise it will throw error
+pub fn zip_with_zero(
+  arr1: List<a>,
+  arr2: List<b>,
+  zero: c,
+  predicate: fn(a, b, c) -> c,
+) -> c {
+  when arr1 is {
+    [] ->
+      when arr2 is {
+        [] -> zero
+        _ -> fail
+      }
+    [x, ..xs] ->
+      when arr2 is {
+        [] -> fail
+        [y, ..ys] -> zip_with_zero(xs, ys, predicate(x, y, zero), predicate)
+      }
+  }
+}
+
+test test_zip_with_zero() {
+  let arr1 =
+    [1, 2, 3]
+  let arr2 =
+    [4, 5, 6]
+  let z1 = zip_with_zero(arr1, arr2, 0, fn(a1, a2, c) { c + a1 + a2 })
+  let z2 = zip_with_zero(arr1, arr2, 1, fn(a1, a2, c) { c * a1 * a2 })
+  z1 == 21 && z2 == 720
+}
+
+test test_zip_with_zero_throw_err_1() fail {
+  let arr1 =
+    [1, 2, 3]
+  let arr2 =
+    [4, 5, 6, 6]
+  let x = zip_with_zero(arr1, arr2, 0, fn(a1, a2, c) { c + a1 + a2 })
+  trace cbor.diagnostic(x)
+  True
+}
+
+test test_zip_with_zero_throw_err_2() fail {
+  let arr1 =
+    [1, 2, 3]
+  let arr2 =
+    [4, 5, 6, 6]
+  let x = zip_with_zero(arr2, arr1, 0, fn(a1, a2, c) { c + a1 + a2 })
   trace cbor.diagnostic(x)
   True
 }

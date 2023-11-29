@@ -27,10 +27,12 @@ There're 3 contracts in the Stableswap system:
 
 ### 3.2 Tokens
 
-- Pool NFT token: Assumed to be unique and can't be replicated. Pool NFT is minted by the team before creating a pool and will be put into the pool on creation. The team will choose the most secured way to mint the NFT (e.g. by using time-locked policy).
-- LP token: Represents Liquidity Provider's share of pool. Each pool has different LP token.
+- Pool NFT token: Identifier of Stableswap Pool. Pool NFT Token is minted once by `LP Minting Policy` contract 
   - CurrencySymbol: Liquidity Contract
-  - TokenName: Same as pool NFT's TokenName.
+  - TokenName: Defined in `LP Minting Policy` parameters
+- LP token: Represents Liquidity Provider's share of pool. Each pool has different LP token. LP Token is minted once by `LP Minting Policy` contract.
+  - CurrencySymbol: Liquidity Contract
+  - TokenName: Defined in `LP Minting Policy` parameters
 - Batcher license token: Permit batcher to apply pool
   - CurrencySymbol: Defined in Pool parameters. The policy is managed by team (e.g. multisig policy)
   - TokenName: POSIX timestamp represents license deadline
@@ -117,11 +119,14 @@ There're 2 order actions:
 
 ### 3.3.3 Liquidity Minting Policy
 
-Liquidity Minting Policy is responsible for making sure only Pool Validator can mint LP, other validations related how many LP will be minted will be forwarded to Pool Validator
+Liquidity Minting Policy is responsible for creating a Liquidity Pool. It can be called once and mint the Pool NFT Token and the maximum Pool LP Token supply
 
-#### 3.3.3.1 Parameter
+#### 3.3.4.1 Parameter
 
-- _nft_asset_: is known as Pool NFT asset which identifies Pool and make sure that Liquidity Pool is unique
+- _out_ref_: is a Reference of an Unspent Transaction Output, which will only be spent the contract is called to make sure this contract can only be called once
+- _pool_nft_asset_name_: the Pool NFT TokenName
+- _pool_lp_asset_name_: the Pool LP TokenName
+- _pool_assets_: The Pool Assets
 
 #### 3.3.3.2 Redeemer
 
@@ -129,8 +134,13 @@ None
 
 #### 3.3.3.3 Validation
 
-- Validate that the transaction must have a Pool UTxO holding 1 NFT Asset in both the inputs and outputs
-- Validate that transaction must only mint LP asset and LP Asset must have the same TokenName with NFT Asset
+- validate that `out_ref` must be presented in the Transaction Inputs
+- validate that there's only single Pool Output that holding Pool NFT Token
+- validate that Pool Datum and Value must be correct:
+  - Initial Pool Value has only Pool NFT Token and MAX_INT64 LP Token
+  - Initial AMP factory must be positive
+  - Initial Pool Balances must be zero array
+- validate that transaction must only mint 1 Pool NFT Token and MAX_INT64 LP Token
 
 #### 3.3.4 Pool Validator
 
@@ -138,9 +148,10 @@ Pool validator is the most important part in the system. It's responsible for gu
 
 #### 3.3.4.1 Parameter
 
-- _nft_asset_: a.k.a Pool NFT asset which identifies Pool and make sure that the Liquidity Pool is unique
-- _lp_asset_: is the "share" asset which is created by the Liquidity Minting Policy
-- _license_symbol_: is the policy ID managed by the Minswap team, used for minting Batcher License and Admin License assets
+- _lp_policy_id_: Policy ID of `Liquidity Minting Policy`
+- _nft_asset_name_: Must be the same with _nft_asset_name_ of `Liquidity Minting Policy`
+- _lp_asset_name_: Must be the same with _nft_asset_name_ of `Liquidity Minting Policy`
+- _batcher_license_policy_id_: is the policy ID managed by the Minswap team, used for minting Batcher License
 - _admin_asset_: is used to identify Admin, can interact with _WithdrawAdminFee_ and _UpdateAmpOrStakeCredential_ redeemer
 - _maximum_deadline_range_: is the maximum expiration time of Batcher license from now (to prevent minting infinity license)
 - _assets_: the stable assets which the Pool supports trading
@@ -152,7 +163,6 @@ Pool validator is the most important part in the system. It's responsible for gu
 #### 3.3.4.3 Datum
 
 - _balances_: is the balances of Pool's assets, has the same index with _assets_ in Pool's parameters
-- _total_liquidity_: is the Total Liquidity (which is equals with total amount of minted LP Token)
 - _amp_: is known as Amplification Coefficient, is the key metric in whole Stableswap system.
 - _order_hash_: Validator Hash of Order Contract
 
@@ -172,11 +182,12 @@ There're 3 pool actions:
   - Pool Value must only contain necessary tokens inside:
     - Minimum ADA
     - Pool NFT Asset
+    - Remaining LP Asset
     - Stable Assets (which is defined in Pool Paramters)
   - Batcher with valid license token must be a signer of transaction. A valid license token is the token having expired timestamp as TokenName and must be within current time and current time + _maximum_deadline_range_
   - Irrelevant field (which is Amplification Coefficient) in Pool datum must be unchanged.
     - Validate the Pool State (datum balances, value balances and total_liquidity) must be the same with the calculated amount after applying through all orders. The validator will loop through the list of batch inputs and outputs and validate each one, as well as calculate the final state of the pool. Important note that order inputs are sorted lexicographically due to Cardano ledger's design, so the Batcher will pre-calculate correct order inputs indexes, pass through the redeemer (input_indexes) and validator will sort the Order Inputs with the indexes to make sure that Orders will be processed with FIFO ordering
-    - Validate that transaction can only mint LP Token if having any order requires minting LP. Otherwise, transaction doesn't mint anything
+    - Transaction doesn't mint anything
     - Balances in Pool In/Out datum must have the same length with Pool Assets
 - **WithdrawAdminFee**:
   - Having only one Pool Input and Output in the transaction. This redeemer doesn't allow any other scripts except Pool's script in the Inputs or Outputs
@@ -184,6 +195,7 @@ There're 3 pool actions:
   - Pool Value must only contain necessary token inside:
     - Minimum ADA
     - Pool NFT Asset
+    - Remaining LP Asset
     - Stable Assets (which is defined in Pool Parameters)
   - This transaction doesn't mint anything
   - Pool Datum must be unchanged in this redeemer
@@ -196,6 +208,7 @@ There're 3 pool actions:
   - Pool Value must only contain necessary tokens inside:
     - Minimum ADA
     - Pool NFT Asset
+    - Remaining LP Asset
     - Stable Assets (which is defined in Pool Parameters)
   - This transaction doesn't mint anything
   - Irrelevant fields (_balances_, _total_liquidity_) in Pool datum must be unchanged
@@ -206,17 +219,17 @@ There're 3 pool actions:
 
 #### 3.4.1 Create Pool
 
-Create Pool transaction is quite simple. Because each Pool has to include a Pool NFT asset. Transaction only create a Pool UTxO which has Pool NFT inside and some initial datum. There's no validation for pool creation, and pools that users can interact on Minswap interface are created and whitelisted by Minswap team. Those pools (and their NFTs) are assumed to be created correctly.
+A Pool can be created once by using `Liquidity Minting Policy`. 
 
 Pool UTxO includes:
 
 - Value:
   - Minimum ADA
-  - Pool NFT
+  - Pool NFT Token
+  - MAX_INT64 LP Token
 - Datum:
-  - balances: an array having N elements, each element has _0_ value
-  - total_liquidity: 0
-  - amp: initial Amplication Coefficient (decided by Minswap team)
+  - _balances_: an array having N elements, each element has _0_ value
+  - _amp_: initial Amplication Coefficient (decided by Minswap team)
   - _order_hash_: is the Validator Hash of `Order Contract`
 
 ![CreatePool](pics/create-pool.png)

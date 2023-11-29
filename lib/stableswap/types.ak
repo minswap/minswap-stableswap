@@ -44,7 +44,6 @@ pub type OrderRedeemer {
 
 pub type PoolDatum {
   balances: List<Int>,
-  total_liquidity: Int,
   amp: Int,
   order_hash: ValidatorHash,
 }
@@ -55,14 +54,15 @@ pub type PoolRedeemer {
     input_indexes: List<Int>,
     license_index: Int,
   }
-  WithdrawAdminFee { admin_index: Int, fee_to_index: Int }
+  WithdrawAdminFee { admin_index: Int }
   UpdateAmpOrStakeCredential { admin_index: Int }
 }
 
 pub type PoolParams {
-  nft_asset: Asset,
-  lp_asset: Asset,
-  license_symbol: PolicyId,
+  lp_policy_id: PolicyId,
+  nft_asset_name: AssetName,
+  lp_asset_name: AssetName,
+  batcher_license_policy_id: PolicyId,
   admin_asset: Asset,
   maximum_deadline_range: Int,
   assets: List<Asset>,

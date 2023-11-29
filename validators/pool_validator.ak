@@ -9,8 +9,11 @@ use aiken/transaction.{
 use aiken/transaction/credential.{
   Address, ScriptCredential, VerificationKeyCredential,
 }
-use aiken/transaction/value.{PolicyId, Value, ada_asset_name, ada_policy_id}
+use aiken/transaction/value.{
+  AssetName, PolicyId, Value, ada_asset_name, ada_policy_id,
+}
 use stableswap/pool_utils as poolutils
+use stableswap/pool_validation
 use stableswap/types.{
   ApplyPool, Asset, DatumMap, Deposit, Exchange, OrderDatum, PoolDatum,
   PoolParams, PoolRedeemer, UpdateAmpOrStakeCredential, Withdraw,
@@ -29,26 +32,59 @@ validator(params: PoolParams) {
     expect Spend(pool_ref) = purpose
     expect Some(pool_input) = transaction.find_input(inputs, pool_ref)
     when redeemer is {
-      ApplyPool(batcher_address, input_indexes, license_idx) -> {
-        expect !builtin.null_list(input_indexes)
-        validate_apply_pool(
-          params: params,
-          transaction: transaction,
-          pool_input: pool_input,
-          pool_in_datum: datum,
-          batcher_address: batcher_address,
-          input_indexes: input_indexes,
-          license_idx: license_idx,
-        )
+      ApplyPool(batcher_address, input_indexes, license_index) -> {
+        let Transaction {
+          inputs,
+          outputs,
+          datums,
+          extra_signatories,
+          validity_range,
+          mint,
+          ..
+        } = transaction
+        let PoolParams { batcher_license_policy_id, maximum_deadline_range, .. } =
+          params
+        let Address { payment_credential: batcher_payment_credential, .. } =
+          batcher_address
+        expect VerificationKeyCredential(batcher_pkh) =
+          batcher_payment_credential
+        // Batching Redeemer provides @license_index which help save calculation cost
+        let license_input = utils.list_at_index(inputs, license_index)
+        and {
+          // Input indexes must not be empty list
+          !builtin.null_list(input_indexes),
+          // Input indexes must be unique
+          utils.is_list_unique(input_indexes),
+          // validate Transaction won't mint any assets
+          value.is_zero(value.from_minted_value(mint)),
+          // Batcher with valid license token must be a signer of transaction
+          list.has(extra_signatories, batcher_pkh),
+          // A valid license token is the token having expired timestamp as TokenName and must be within current time and current time + _maximum_deadline_range_
+          pool_validation.validate_batcher_license(
+            license_input: license_input,
+            validity_range: validity_range,
+            license_policy_id: batcher_license_policy_id,
+            maximum_deadline_range: maximum_deadline_range,
+          ),
+          validate_apply_pool(
+            params: params,
+            all_inputs: inputs,
+            all_outputs: outputs,
+            all_datums: datums,
+            pool_input: pool_input,
+            pool_in_datum: datum,
+            batcher_address: batcher_address,
+            input_indexes: input_indexes,
+          ),
+        }
       }
-      WithdrawAdminFee(admin_index, fee_to_index) ->
+      WithdrawAdminFee(admin_index) ->
         validate_withdraw_admin_fee(
           params: params,
           transaction: transaction,
           pool_input: pool_input,
           pool_in_datum: datum,
           admin_index: admin_index,
-          fee_to_index: fee_to_index,
         )
       UpdateAmpOrStakeCredential(admin_index) ->
         validate_update_amp_or_update_stake_credential(
@@ -65,32 +101,23 @@ validator(params: PoolParams) {
 // This function will trigger validation of ApplyPool redeemer
 fn validate_apply_pool(
   params: PoolParams,
-  transaction: Transaction,
+  all_inputs: List<Input>,
+  all_outputs: List<Output>,
+  all_datums: DatumMap,
   pool_input: Input,
   pool_in_datum: PoolDatum,
   batcher_address: Address,
   input_indexes: List<Int>,
-  license_idx: Int,
 ) -> Bool {
-  let Transaction {
-    inputs,
-    outputs,
-    mint,
-    validity_range,
-    extra_signatories,
-    datums,
-    ..
-  } = transaction
   let PoolParams {
-    nft_asset,
-    lp_asset,
+    lp_policy_id,
+    nft_asset_name,
+    lp_asset_name,
     assets,
     multiples,
     fee,
     admin_fee,
     fee_denominator,
-    license_symbol,
-    maximum_deadline_range,
     ..
   } = params
   let Input { output: pool_in_output, .. } = pool_input
@@ -105,7 +132,7 @@ fn validate_apply_pool(
   //   make sure that there's only one input and one output matching with pool's payment_credential
   expect [pool_output] =
     list.filter(
-      outputs,
+      all_outputs,
       fn(o) {
         let Output { address: addr, .. } = o
         addr == pool_in_address
@@ -117,7 +144,7 @@ fn validate_apply_pool(
   // Batching transaction only allow 1 Pool UTxO in the Inputs
   expect [_] =
     list.filter(
-      inputs,
+      all_inputs,
       fn(i) {
         let Input { output: out, .. } = i
         let Output { address: addr, .. } = out
@@ -129,57 +156,53 @@ fn validate_apply_pool(
   expect pool_out_datum: PoolDatum =
     when pool_out_datum_raw is {
       InlineDatum(d) -> d
-      _ -> utils.must_find_script_datum(datums, pool_out_datum_raw)
+      _ -> utils.must_find_script_datum(all_datums, pool_out_datum_raw)
     }
   let PoolDatum {
     balances: pool_out_balances,
-    total_liquidity: pool_out_total_liquidity,
     amp: pool_out_amp,
     order_hash: pool_out_order_hash,
   } = pool_out_datum
 
   let PoolDatum {
     balances: pool_in_balances,
-    total_liquidity: pool_in_total_liquidity,
     amp: pool_in_amp,
     order_hash: pool_in_order_hash,
   } = pool_in_datum
-
-  // - Pool NFT is the part of Pool Value, which is known as Pool Identifier
-  // - Pool NFT must be existed on both Pool In/Output Value
-  let Asset { policy_id: nft_policy_id, asset_name: nft_asset_name } = nft_asset
+  let lp_asset = Asset { policy_id: lp_policy_id, asset_name: lp_asset_name }
+  let remaining_lp_amount_in_pool_in =
+    value.quantity_of(pool_in_value, lp_policy_id, lp_asset_name)
+  let pool_in_total_liquidity =
+    utils.max_lp_supply - remaining_lp_amount_in_pool_in
+  let value_balances_in =
+    list.map(
+      assets,
+      fn(asset) {
+        let Asset { policy_id, asset_name } = asset
+        value.quantity_of(pool_in_value, policy_id, asset_name)
+      },
+    )
+  let expected_pool_in_value_without_lovelace =
+    construct_pool_value_without_lovelace(
+      lp_policy_id: lp_policy_id,
+      nft_asset_name: nft_asset_name,
+      lp_asset_name: lp_asset_name,
+      total_lp_amount: remaining_lp_amount_in_pool_in,
+      pool_assets: assets,
+      pool_balances: value_balances_in,
+    )
   expect and {
-      // Pool NFT must be existed in Pool Input and Output value
-      value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1,
-      value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1,
-      // Pool Value must only contains necessary token inside
-      check_pool_value(pool_out_value, assets),
-      // In @ApplyPool Redeemer, only balances and total_liquidity can be changed.
-      // The Amplification Coeffience & Order Hash must be unchanged. Amplification Coeffience can only be update via @UpdateAmp redeemer
+      // Pool Value in the Input must have necessary tokens
+      expected_pool_in_value_without_lovelace == value.without_lovelace(
+        pool_in_value,
+      ),
+      // Batching transaction can not change the AMP factor and order hash
       pool_in_amp == pool_out_amp,
       pool_in_order_hash == pool_out_order_hash,
     }
-  let license_input = utils.list_at_index(inputs, license_idx)
-  let license_deadline =
-    find_license_deadline(license_symbol, license_input.output.value)
-  let (start_valid_time_range, end_valid_time_range) =
-    find_posix_time_range(validity_range)
-
-  // - Only Batcher with valid license token can trigger @ApplyPool redeemer validation.  
-  // - A valid license token is the token with @tokenName (representing for expired milliseconds) 
-  //   and must be within the time range from current_time to current_time + maximum_deadline_range
-  let Address { payment_credential: batcher_payment_credential, .. } =
-    batcher_address
-  expect VerificationKeyCredential(batcher_pkh) = batcher_payment_credential
-  // Batcher with valid license token must be a signer of transaction
-  expect and {
-      list.has(extra_signatories, batcher_pkh),
-      license_deadline >= end_valid_time_range,
-      license_deadline <= start_valid_time_range + maximum_deadline_range,
-    }
   let user_inputs =
     list.filter(
-      inputs,
+      all_inputs,
       fn(input) {
         let Input { output: out, .. } = input
         let Output { address: addr, .. } = out
@@ -203,7 +226,7 @@ fn validate_apply_pool(
     )
   let user_outputs =
     list.filter(
-      outputs,
+      all_outputs,
       fn(output) {
         let Output { address: addr, .. } = output
         addr != pool_in_address && addr != batcher_address
@@ -211,8 +234,6 @@ fn validate_apply_pool(
     )
 
   expect and {
-      // @input_indexes which is provided by Batcher must be unique array
-      utils.is_list_unique(input_indexes),
       // @input_indexes and @user_inputs must have the same length
       utils.compare_list_length(input_indexes, user_inputs),
       // User Inputs and Outputs must have the same length
@@ -221,25 +242,9 @@ fn validate_apply_pool(
       utils.compare_list_length(assets, pool_in_balances),
       utils.compare_list_length(assets, pool_out_balances),
     }
-  let value_balances_in =
-    list.map(
-      assets,
-      fn(asset) {
-        let Asset { policy_id, asset_name } = asset
-        value.quantity_of(pool_in_value, policy_id, asset_name)
-      },
-    )
-  let value_balances_out =
-    list.map(
-      assets,
-      fn(asset) {
-        let Asset { policy_id, asset_name } = asset
-        value.quantity_of(pool_out_value, policy_id, asset_name)
-      },
-    )
-  let pool_out_state =
+  let (new_datum_balances, new_value_balances, new_total_liquidity) =
     apply_orders(
-      datum_map: datums,
+      datum_map: all_datums,
       user_inputs: sorted_users_inputs,
       user_outputs: user_outputs,
       assets: assets,
@@ -251,21 +256,26 @@ fn validate_apply_pool(
       fee_denominator: fee_denominator,
       pool_state: (pool_in_balances, value_balances_in, pool_in_total_liquidity),
     )
-  let Asset { policy_id: lp_policy_id, asset_name: lp_asset_name } = lp_asset
-  let total_delta_liquidity = pool_out_total_liquidity - pool_in_total_liquidity
-  let expected_mint =
-    value.zero()
-      |> value.add(lp_policy_id, lp_asset_name, total_delta_liquidity)
-  // Validate the Pool State (datum balances, value balances and total_liquidity) must be the same with the calculated amount after applying through all orders
+  // New Remaining LP Token in the Value must equal to calculated amount
+  let remaining_lp_amount_in_pool_out =
+    pool_in_total_liquidity + remaining_lp_amount_in_pool_in - new_total_liquidity
+  let expected_pool_out_value_without_lovelace =
+    construct_pool_value_without_lovelace(
+      lp_policy_id: lp_policy_id,
+      nft_asset_name: nft_asset_name,
+      lp_asset_name: lp_asset_name,
+      total_lp_amount: remaining_lp_amount_in_pool_out,
+      pool_assets: assets,
+      // New Balances in the Value must equal to calculated amount
+      pool_balances: new_value_balances,
+    )
   and {
-    // value_balances_out == new_value_balances && pool_out_balances == new_datum_balances && pool_out_total_liquidity == new_total_liquidity
-    pool_out_state == (
-      pool_out_balances,
-      value_balances_out,
-      pool_out_total_liquidity,
+    // The calculated Datum Balances must be equal to Pool Datum balances
+    pool_out_balances == new_datum_balances,
+    // Pool Value in the Output must have necessary tokens and the amount must be the same with calculated amount 
+    expected_pool_out_value_without_lovelace == value.without_lovelace(
+      pool_out_value,
     ),
-    // Validate that @mint can only contains LP Token if having any order requires minting LP, otherwise, it must be empty
-    value.from_minted_value(mint) == expected_mint,
   }
 }
 
@@ -276,18 +286,31 @@ fn validate_withdraw_admin_fee(
   pool_input: Input,
   pool_in_datum: PoolDatum,
   admin_index: Int,
-  fee_to_index: Int,
 ) -> Bool {
   let Transaction { inputs, outputs, mint, datums, redeemers, .. } = transaction
-  let PoolParams { nft_asset, assets, admin_asset, .. } = params
-  let Input { output: pool_in_output, .. } = pool_input
-  let Output { address: pool_in_address, value: pool_in_value, .. } =
-    pool_in_output
+  let PoolParams {
+    lp_policy_id,
+    nft_asset_name,
+    lp_asset_name,
+    assets,
+    admin_asset,
+    ..
+  } = params
+  let Input {
+    output: Output { address: pool_in_address, value: pool_in_value, .. },
+    ..
+  } = pool_input
 
   // - The validation requires having only a single Pool Output
   // - The Pool Input and Output must have the same Address (both payment and stake credential part)
   expect [pool_output] =
-    list.filter(outputs, fn(o) { o.address == pool_in_address })
+    list.filter(
+      outputs,
+      fn(o) {
+        let Output { address: addr, .. } = o
+        addr == pool_in_address
+      },
+    )
   let Output { value: pool_out_value, datum: pool_out_datum_raw, .. } =
     pool_output
 
@@ -298,11 +321,8 @@ fn validate_withdraw_admin_fee(
     }
 
   let PoolDatum { balances: pool_in_balances, .. } = pool_in_datum
-
-  // - Pool NFT is the part of Pool Value, which is known as Pool Identifier
-  // - Pool NFT must be existed on both Pool In/Output Value
-  let Asset { policy_id: nft_policy_id, asset_name: nft_asset_name } = nft_asset
-
+  let remaining_lp_amount_in_pool_in =
+    value.quantity_of(pool_in_value, lp_policy_id, lp_asset_name)
   let value_balances_in =
     list.map(
       assets,
@@ -311,49 +331,43 @@ fn validate_withdraw_admin_fee(
         value.quantity_of(pool_in_value, policy_id, asset_name)
       },
     )
-  let value_balances_out =
-    list.map(
-      assets,
-      fn(asset) {
-        let Asset { policy_id, asset_name } = asset
-        value.quantity_of(pool_out_value, policy_id, asset_name)
-      },
+  let expected_pool_in_value_without_lovelace =
+    construct_pool_value_without_lovelace(
+      lp_policy_id: lp_policy_id,
+      nft_asset_name: nft_asset_name,
+      lp_asset_name: lp_asset_name,
+      total_lp_amount: remaining_lp_amount_in_pool_in,
+      pool_assets: assets,
+      pool_balances: value_balances_in,
+    )
+  let expected_pool_out_value_without_lovelace =
+    construct_pool_value_without_lovelace(
+      lp_policy_id: lp_policy_id,
+      nft_asset_name: nft_asset_name,
+      lp_asset_name: lp_asset_name,
+      // Remaining LP Token will not changed
+      total_lp_amount: remaining_lp_amount_in_pool_in,
+      pool_assets: assets,
+      // The Admin Fee = Balances in the Value - Balances in the Datum
+      // New Balances in the Value must be equal to Balances in the Datum after withdrawal
+      pool_balances: pool_in_balances,
     )
   expect and {
       // Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
       dict.size(redeemers) == 1,
-      // Pool NFT must be existed in Pool Input and Output value
-      value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1,
-      value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1,
-      // Pool Value must only contains necessary token inside
-      check_pool_value(pool_out_value, assets),
-      // Pool Datum must be unchanged in this redeemer
+      // Pool Value in the Input must have necessary tokens
+      expected_pool_in_value_without_lovelace == value.without_lovelace(
+        pool_in_value,
+      ),
+      // Pool Value in the Output must have necessary tokens
+      expected_pool_out_value_without_lovelace == value.without_lovelace(
+        pool_out_value,
+      ),
+      // Pool Datum will not changed
       pool_in_datum == pool_out_datum,
-      // After Admin Fee amounts are withdrawn, Pool Value must be equals with Datum balances
-      value_balances_out == pool_in_balances,
     }
-  // - Admin Fee amounts are the amounts belonged to Admin 
-  // - These amounts are accumulated in Pool Value and 
-  //   are calculated by the diff of Pool Value and Datum Balances 
-  let admin_fee_amounts =
-    utils.zip_with(
-      value_balances_in,
-      pool_in_balances,
-      fn(val, bal) { val - bal },
-    )
-  let fee_to_output = utils.list_at_index(outputs, fee_to_index)
-  let withdrawal_amounts =
-    list.map(
-      assets,
-      fn(asset) {
-        let Asset { policy_id, asset_name } = asset
-        value.quantity_of(fee_to_output.value, policy_id, asset_name)
-      },
-    )
-  // Admin can only withdraw the exact accumulated admin fee amounts
-  expect withdrawal_amounts == admin_fee_amounts
-  let admin_input = utils.list_at_index(inputs, admin_index)
-  let admin_value = admin_input.output.value
+  let Input { output: Output { value: admin_value, .. }, .. } =
+    utils.list_at_index(inputs, admin_index)
   let Asset { policy_id: admin_policy_id, asset_name: admin_asset_name } =
     admin_asset
 
@@ -374,12 +388,18 @@ fn validate_update_amp_or_update_stake_credential(
   admin_index: Int,
 ) -> Bool {
   let Transaction { inputs, outputs, mint, datums, redeemers, .. } = transaction
-  let PoolParams { nft_asset, assets, admin_asset, .. } = params
-  let Input { output: pool_in_output, .. } = pool_input
-  let Output { address: pool_in_address, value: pool_in_value, .. } =
-    pool_in_output
-  let Address { payment_credential: pool_in_address_payment_credential, .. } =
-    pool_in_address
+  let PoolParams { admin_asset, .. } = params
+  let Input {
+    output: Output {
+      address: Address {
+        payment_credential: pool_in_address_payment_credential,
+        ..
+      },
+      value: pool_in_value,
+      ..
+    },
+    ..
+  } = pool_input
 
   // - The validation requires having only a single Pool Output
   // - The Pool Input and Output must have the same Address (only payment_credential part)
@@ -405,56 +425,29 @@ fn validate_update_amp_or_update_stake_credential(
 
   let PoolDatum {
     balances: pool_out_balances,
-    total_liquidity: pool_out_total_liquidity,
     order_hash: pool_out_order_hash,
-    ..
+    amp: pool_out_amp,
   } = pool_out_datum
 
   let PoolDatum {
     balances: pool_in_balances,
-    total_liquidity: pool_in_total_liquidity,
     order_hash: pool_in_order_hash,
     ..
   } = pool_in_datum
 
-  // - Pool NFT is the part of Pool Value, which is known as Pool Identifier
-  // - Pool NFT must be existed on both Pool In/Output Value
-  let Asset { policy_id: nft_policy_id, asset_name: nft_asset_name } = nft_asset
-
   expect and {
       // Having only one Pool Input in the transaction and make sure that it's an unique script in the input.
       dict.size(redeemers) == 1,
-      // Pool NFT must be existed in Pool Input and Output value
-      value.quantity_of(pool_in_value, nft_policy_id, nft_asset_name) == 1,
-      value.quantity_of(pool_out_value, nft_policy_id, nft_asset_name) == 1,
-      // Pool Value must only contains necessary token inside
-      check_pool_value(pool_out_value, assets),
-      // - Only Pool Datum's AMP can be updated, other fields must remain unchanged
-      // - TODO: Research the acceptable range which AMP can be changed
+      // Pool Value will not be changed
+      pool_in_value == pool_out_value,
+      // Pool Datum Balances and Order Hash will not be changed
       pool_in_balances == pool_out_balances,
-      pool_in_total_liquidity == pool_out_total_liquidity,
       pool_in_order_hash == pool_out_order_hash,
+      // New AMP factory must be positive
+      pool_out_amp > 0,
     }
-  let value_balances_in =
-    list.map(
-      assets,
-      fn(asset) {
-        let Asset { policy_id, asset_name } = asset
-        value.quantity_of(pool_in_value, policy_id, asset_name)
-      },
-    )
-  let value_balances_out =
-    list.map(
-      assets,
-      fn(asset) {
-        let Asset { policy_id, asset_name } = asset
-        value.quantity_of(pool_out_value, policy_id, asset_name)
-      },
-    )
-  // Pool Value must be unchanged in this redeemer
-  expect value_balances_in == value_balances_out
-  let admin_input = utils.list_at_index(inputs, admin_index)
-  let admin_value = admin_input.output.value
+  let Input { output: Output { value: admin_value, .. }, .. } =
+    utils.list_at_index(inputs, admin_index)
   let Asset { policy_id: admin_policy_id, asset_name: admin_asset_name } =
     admin_asset
   and {
@@ -1180,33 +1173,29 @@ fn find_posix_time_range(time_rage: ValidityRange) -> (Int, Int) {
   (t1, t2)
 }
 
-// This function will verify Pool Value elements
-// Pool Value only includes minimum ADA, Pool NFT and Stable Assets (if have) 
-fn check_pool_value(val: Value, assets: List<Asset>) -> Bool {
-  let flatten_val = value.flatten(val)
-  let stable_asset_num =
-    list.reduce(
-      assets,
-      0,
-      fn(n, asset) {
-        let Asset { policy_id, asset_name } = asset
-        let c =
-          if value.quantity_of(val, policy_id, asset_name) > 0 {
-            1
-          } else {
-            0
-          }
-        n + c
-      },
-    )
-  list.length(flatten_val) == stable_asset_num + 2
-}
-
-fn find_license_deadline(license_symbol: PolicyId, val: Value) -> Int {
-  expect [(tn, am)] =
-    val
-      |> value.tokens(license_symbol)
-      |> dict.to_list()
-  expect am == 1
-  utils.bytearray_to_int(tn)
+// Pool Value must be followed by the rule below
+// - 1 Pool NFT 
+// - Remaining LP Token
+// - Stable Tokens
+fn construct_pool_value_without_lovelace(
+  lp_policy_id: PolicyId,
+  nft_asset_name: AssetName,
+  lp_asset_name: AssetName,
+  total_lp_amount: Int,
+  pool_assets: List<Asset>,
+  pool_balances: List<Int>,
+) -> Value {
+  let base_val =
+    value.zero()
+      |> value.add(lp_policy_id, nft_asset_name, 1)
+      |> value.add(lp_policy_id, lp_asset_name, total_lp_amount)
+  utils.zip_with_zero(
+    arr1: pool_assets,
+    arr2: pool_balances,
+    zero: base_val,
+    predicate: fn(asset, balance, v) {
+      let Asset { policy_id: p, asset_name: an } = asset
+      value.add(v, p, an, balance)
+    },
+  )
 }
