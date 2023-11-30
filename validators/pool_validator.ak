@@ -1,6 +1,5 @@
 use aiken/builtin
-use aiken/dict.{Dict}
-use aiken/hash.{Blake2b_256, Hash}
+use aiken/dict
 use aiken/interval.{Finite}
 use aiken/list
 use aiken/transaction.{
@@ -13,9 +12,9 @@ use aiken/transaction/credential.{
 use aiken/transaction/value.{PolicyId, Value, ada_asset_name, ada_policy_id}
 use stableswap/pool_utils as poolutils
 use stableswap/types.{
-  ApplyPool, Asset, Deposit, Exchange, OrderDatum, PoolDatum, PoolParams,
-  PoolRedeemer, UpdateAmpOrStakeCredential, Withdraw, WithdrawAdminFee,
-  WithdrawImbalance, WithdrawOneCoin,
+  ApplyPool, Asset, DatumMap, Deposit, Exchange, OrderDatum, PoolDatum,
+  PoolParams, PoolRedeemer, UpdateAmpOrStakeCredential, Withdraw,
+  WithdrawAdminFee, WithdrawImbalance, WithdrawOneCoin,
 }
 use stableswap/utils
 
@@ -112,7 +111,8 @@ fn validate_apply_pool(
         addr == pool_in_address
       },
     )
-  let Output { value: pool_out_value, .. } = pool_output
+  let Output { value: pool_out_value, datum: pool_out_datum_raw, .. } =
+    pool_output
 
   // Batching transaction only allow 1 Pool UTxO in the Inputs
   expect [_] =
@@ -127,7 +127,10 @@ fn validate_apply_pool(
     )
 
   expect pool_out_datum: PoolDatum =
-    must_find_script_datum(outputs, datums, pool_output)
+    when pool_out_datum_raw is {
+      InlineDatum(d) -> d
+      _ -> utils.must_find_script_datum(datums, pool_out_datum_raw)
+    }
   let PoolDatum {
     balances: pool_out_balances,
     total_liquidity: pool_out_total_liquidity,
@@ -236,8 +239,7 @@ fn validate_apply_pool(
     )
   let pool_out_state =
     apply_orders(
-      all_outputs: outputs,
-      datum_dict: datums,
+      datum_map: datums,
       user_inputs: sorted_users_inputs,
       user_outputs: user_outputs,
       assets: assets,
@@ -286,10 +288,14 @@ fn validate_withdraw_admin_fee(
   // - The Pool Input and Output must have the same Address (both payment and stake credential part)
   expect [pool_output] =
     list.filter(outputs, fn(o) { o.address == pool_in_address })
-  let Output { value: pool_out_value, .. } = pool_output
+  let Output { value: pool_out_value, datum: pool_out_datum_raw, .. } =
+    pool_output
 
   expect pool_out_datum: PoolDatum =
-    must_find_script_datum(outputs, datums, pool_output)
+    when pool_out_datum_raw is {
+      InlineDatum(d) -> d
+      _ -> utils.must_find_script_datum(datums, pool_out_datum_raw)
+    }
 
   let PoolDatum { balances: pool_in_balances, .. } = pool_in_datum
 
@@ -388,10 +394,14 @@ fn validate_update_amp_or_update_stake_credential(
         payment_credential == pool_in_address_payment_credential
       },
     )
-  let Output { value: pool_out_value, .. } = pool_output
+  let Output { value: pool_out_value, datum: pool_out_datum_raw, .. } =
+    pool_output
 
   expect pool_out_datum: PoolDatum =
-    must_find_script_datum(outputs, datums, pool_output)
+    when pool_out_datum_raw is {
+      InlineDatum(d) -> d
+      _ -> utils.must_find_script_datum(datums, pool_out_datum_raw)
+    }
 
   let PoolDatum {
     balances: pool_out_balances,
@@ -455,19 +465,8 @@ fn validate_update_amp_or_update_stake_credential(
   }
 }
 
-fn find_order_datum(
-  outputs: List<Output>,
-  datums: Dict<Hash<Blake2b_256, Data>, Data>,
-  output: Output,
-) -> OrderDatum {
-  expect order_datum: OrderDatum =
-    must_find_script_datum(outputs, datums, output)
-  order_datum
-}
-
 fn apply_orders(
-  all_outputs: List<Output>,
-  datum_dict: Dict<Hash<Blake2b_256, Data>, Data>,
+  datum_map: DatumMap,
   user_inputs: List<Input>,
   user_outputs: List<Output>,
   assets: List<Asset>,
@@ -485,14 +484,25 @@ fn apply_orders(
       when user_outputs is {
         [] -> pool_state
         [output, ..outputs] -> {
-          let Input { output: order_in_output, .. } = input
-          let Output { value: order_in_value, .. } = order_in_output
+          let Input {
+            output: Output {
+              value: order_in_value,
+              datum: order_in_datum_raw,
+              ..
+            },
+            ..
+          } = input
           let Output {
             value: order_out_value,
             address: output_address,
             datum: order_output_datum,
             ..
           } = output
+          expect order_datum: OrderDatum =
+            when order_in_datum_raw is {
+              InlineDatum(d) -> d
+              _ -> utils.must_find_script_datum(datum_map, order_in_datum_raw)
+            }
           let OrderDatum {
             receiver,
             batcher_fee,
@@ -500,7 +510,7 @@ fn apply_orders(
             step: order_step,
             receiver_datum_hash,
             ..
-          } = find_order_datum(all_outputs, datum_dict, order_in_output)
+          } = order_datum
           let is_valid_receiver_datum_hash =
             when receiver_datum_hash is {
               Some(datum_hash) -> {
@@ -602,8 +612,7 @@ fn apply_orders(
               }
             }
           apply_orders(
-            all_outputs: all_outputs,
-            datum_dict: datum_dict,
+            datum_map: datum_map,
             user_inputs: inputs,
             user_outputs: outputs,
             assets: assets,
@@ -1132,20 +1141,11 @@ fn validate_withdraw_one_coin(
   expect amount_out >= minimum_amount_out
   let Asset { policy_id: asset_out_policy_id, asset_name: asset_out_asset_name } =
     asset_out
-  let asset_amount_out =
-    value.quantity_of(
-      order_out_value,
-      asset_out_policy_id,
-      asset_out_asset_name,
-    )
-  let amount_ada_out =
-    value.quantity_of(
-      order_out_value,
-      value.ada_policy_id,
-      value.ada_asset_name,
-    )
   // Verify the amount will be returned to users must be followed by the calculation above
-  expect asset_amount_out == amount_out && amount_ada_out == output_ada
+  let expected_order_out_value =
+    value.zero()
+      |> value.add(ada_policy_id, ada_asset_name, output_ada)
+      |> value.add(asset_out_policy_id, asset_out_asset_name, amount_out)
   let admin_fee_amount = fee_amount * admin_fee / fee_denominator
   let new_datum_balances =
     list.indexed_map(
@@ -1170,7 +1170,7 @@ fn validate_withdraw_one_coin(
       },
     )
   // Verify the output will be returned to users must contains only necessary tokens
-  expect list.length(value.flatten(order_out_value)) == 2
+  expect order_out_value == expected_order_out_value
   (new_datum_balances, new_value_balances, total_liquidity - amount_lp_in)
 }
 
@@ -1209,18 +1209,4 @@ fn find_license_deadline(license_symbol: PolicyId, val: Value) -> Int {
       |> dict.to_list()
   expect am == 1
   utils.bytearray_to_int(tn)
-}
-
-fn must_find_script_datum(
-  outputs: List<Output>,
-  datums: Dict<Hash<Blake2b_256, Data>, Data>,
-  output: Output,
-) -> Data {
-  let data_option =
-    when output.datum is {
-      NoDatum -> None
-      DatumHash(dh) -> transaction.find_datum(outputs, datums, dh)
-      InlineDatum(dat) -> Some(dat)
-    }
-  utils.must_parse_option(data_option)
 }

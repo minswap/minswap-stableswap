@@ -1,8 +1,11 @@
 use aiken/builtin
 use aiken/bytearray
 use aiken/cbor
+use aiken/dict
 use aiken/list
 use aiken/string
+use aiken/transaction.{Datum, DatumHash, InlineDatum, NoDatum}
+use stableswap/types.{DatumMap}
 
 const minus_ascii_code = 45
 
@@ -208,11 +211,6 @@ test test_compare_list_with() {
   r1 && r2 && !r3 && !not_over_slippage && !r4
 }
 
-pub fn must_parse_option(op: Option<a>) -> a {
-  expect Some(t) = op
-  t
-}
-
 pub fn list_at_index(outputs: List<a>, payout_outputs_offset: Int) -> a {
   if payout_outputs_offset >= 5 {
     outputs
@@ -379,4 +377,17 @@ test test_is_list_unique() {
     is_list_unique(arr3),
     !is_list_unique(arr4),
   }
+}
+
+pub fn must_find_script_datum(datums: DatumMap, datum: Datum) -> Data {
+  let datum_opt =
+    when datum is {
+      NoDatum -> None
+      DatumHash(dh) ->
+        datums
+          |> dict.get(dh)
+      InlineDatum(dat) -> Some(dat)
+    }
+  expect Some(datum) = datum_opt
+  datum
 }
