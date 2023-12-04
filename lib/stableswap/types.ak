@@ -50,11 +50,7 @@ pub type PoolDatum {
 }
 
 pub type PoolRedeemer {
-  ApplyPool {
-    batcher_address: Address,
-    input_indexes: List<Int>,
-    license_index: Int,
-  }
+  ApplyPool { input_indexes: List<Int>, license_index: Int }
   WithdrawAdminFee { admin_index: Int, fee_to_index: Int }
   UpdateAmpOrStakeCredential { admin_index: Int }
 }

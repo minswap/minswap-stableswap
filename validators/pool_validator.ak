@@ -6,9 +6,7 @@ use aiken/transaction.{
   DatumHash, InlineDatum, Input, NoDatum, Output, ScriptContext, Spend,
   Transaction, ValidityRange,
 }
-use aiken/transaction/credential.{
-  Address, ScriptCredential, VerificationKeyCredential,
-}
+use aiken/transaction/credential.{Address, ScriptCredential}
 use aiken/transaction/value.{PolicyId, Value, ada_asset_name, ada_policy_id}
 use stableswap/pool_utils as poolutils
 use stableswap/types.{
@@ -29,14 +27,13 @@ validator(params: PoolParams) {
     expect Spend(pool_ref) = purpose
     expect Some(pool_input) = transaction.find_input(inputs, pool_ref)
     when redeemer is {
-      ApplyPool(batcher_address, input_indexes, license_idx) -> {
+      ApplyPool(input_indexes, license_idx) -> {
         expect !builtin.null_list(input_indexes)
         validate_apply_pool(
           params: params,
           transaction: transaction,
           pool_input: pool_input,
           pool_in_datum: datum,
-          batcher_address: batcher_address,
           input_indexes: input_indexes,
           license_idx: license_idx,
         )
@@ -68,19 +65,11 @@ fn validate_apply_pool(
   transaction: Transaction,
   pool_input: Input,
   pool_in_datum: PoolDatum,
-  batcher_address: Address,
   input_indexes: List<Int>,
   license_idx: Int,
 ) -> Bool {
-  let Transaction {
-    inputs,
-    outputs,
-    mint,
-    validity_range,
-    extra_signatories,
-    datums,
-    ..
-  } = transaction
+  let Transaction { inputs, outputs, mint, validity_range, datums, .. } =
+    transaction
   let PoolParams {
     nft_asset,
     lp_asset,
@@ -159,21 +148,18 @@ fn validate_apply_pool(
       pool_in_amp == pool_out_amp,
       pool_in_order_hash == pool_out_order_hash,
     }
-  let license_input = utils.list_at_index(inputs, license_idx)
-  let license_deadline =
-    find_license_deadline(license_symbol, license_input.output.value)
+  let Input {
+    output: Output { address: batcher_address, value: batcher_value, .. },
+    ..
+  } = utils.list_at_index(inputs, license_idx)
+  let license_deadline = find_license_deadline(license_symbol, batcher_value)
   let (start_valid_time_range, end_valid_time_range) =
     find_posix_time_range(validity_range)
 
   // - Only Batcher with valid license token can trigger @ApplyPool redeemer validation.  
   // - A valid license token is the token with @tokenName (representing for expired milliseconds) 
   //   and must be within the time range from current_time to current_time + maximum_deadline_range
-  let Address { payment_credential: batcher_payment_credential, .. } =
-    batcher_address
-  expect VerificationKeyCredential(batcher_pkh) = batcher_payment_credential
-  // Batcher with valid license token must be a signer of transaction
   expect and {
-      list.has(extra_signatories, batcher_pkh),
       license_deadline >= end_valid_time_range,
       license_deadline <= start_valid_time_range + maximum_deadline_range,
     }
