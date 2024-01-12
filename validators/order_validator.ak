@@ -44,18 +44,16 @@ validator(
           ScriptCredential(_) ->
             // In case owner is script address, this script will require at least 1 owner UTxO in input
             // If owner UTxO has enough condition to unlock itself, it can unlock this script as well
-            list.length(
-              list.filter(
-                inputs,
-                fn(input) {
-                  let Input { output, .. } = input
-                  let Output { address: out_address, .. } = output
-                  let Address { payment_credential: out_payment_credential, .. } =
-                    out_address
-                  out_payment_credential == owner_payment_credential
-                },
-              ),
-            ) > 0
+            list.any(
+              inputs,
+              fn(input) {
+                let Input { output, .. } = input
+                let Output { address: out_address, .. } = output
+                let Address { payment_credential: out_payment_credential, .. } =
+                  out_address
+                out_payment_credential == owner_payment_credential
+              },
+            )
         }
       }
     }
