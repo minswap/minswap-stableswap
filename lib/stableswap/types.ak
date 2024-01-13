@@ -1,3 +1,4 @@
+use aiken/dict.{Dict}
 use aiken/hash.{Blake2b_224, Blake2b_256, Hash}
 use aiken/transaction/credential.{Address, Script, VerificationKey}
 use aiken/transaction/value.{AssetName, PolicyId}
@@ -15,6 +16,9 @@ pub type ValidatorHash =
 
 pub type PubKeyHash =
   Hash<Blake2b_224, VerificationKey>
+
+pub type DatumMap =
+  Dict<Hash<Blake2b_256, Data>, Data>
 
 pub type OrderStep {
   Exchange { asset_in_index: Int, asset_out_index: Int, minimum_asset_out: Int }
@@ -46,11 +50,7 @@ pub type PoolDatum {
 }
 
 pub type PoolRedeemer {
-  ApplyPool {
-    batcher_address: Address,
-    input_indexes: List<Int>,
-    license_index: Int,
-  }
+  ApplyPool { input_indexes: List<Int>, license_index: Int }
   WithdrawAdminFee { admin_index: Int, fee_to_index: Int }
   UpdateAmpOrStakeCredential { admin_index: Int }
 }
@@ -66,4 +66,9 @@ pub type PoolParams {
   fee: Int,
   admin_fee: Int,
   fee_denominator: Int,
+}
+
+pub type OrderBatchingRedeemer {
+  // it's used for finding Pool Input faster
+  pool_input_index: Int,
 }

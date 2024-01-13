@@ -40,15 +40,41 @@ There're 3 contracts in the Stableswap system:
 
 ### 3.3 Smart Contract
 
-#### 3.3.1 Order Validator
+#### 3.3.1 Order Batching Validator
 
-Order validator is responsible for holding "User Requests" funds and details about what users want to do with the liquidity pool. An order can only be applied to the liquidity pool by Batcher or cancelled by User's payment signature.
+
+Order Batching validator is a Withdrawal Script, is responsible for validating Pool Representation in the Transaction Inputs. This validator will help reduce `Order Validator` cost in Batching Transaction.
+
 
 #### 3.3.1.1 Parameter
 
-- _pool_validator_hash_: the hash of Pool Script which Order Validator depends on
 
-#### 3.3.1.2 Datum
+- _pool_hash_: the hash of Liquidity Pool Script
+
+
+#### 3.3.1.2 Redeemer
+
+
+- **OrderBatchingRedeemer**:
+   - _pool_input_index_: Index of Pool UTxO in Transaction Inputs.
+
+
+#### 3.3.1.3 Validation
+
+
+- **OrderBatchingRedeemer**: The redeemer contains `pool_input_index`, it's used for finding Pool Input faster, it will be called on Batching Transaction.
+   - validate that there's a Pool Input which have Address's Payment Credential matching with `pool_hash`
+
+
+#### 3.3.2 Order Validator
+
+Order validator is responsible for holding "User Requests" funds and details about what users want to do with the liquidity pool. An order can only be applied to the liquidity pool by Batcher or cancelled by User's payment signature / Script Owner Representation (in case Owner is a Smart Contract)
+
+#### 3.3.2.1 Parameter
+
+- _stake_credential_: the Stake Credential of `Order Batching Validator`
+
+#### 3.3.2.2 Datum
 
 There are 5 order types:
 
@@ -75,40 +101,42 @@ An Order Datum keeps information about Order Type and some other informations:
 - _batcher_fee_: The fee users have to pay to Batcher to execute batching transaction
 - _output_ada_: As known as Minimum ADA which users need to put to the Order, and these amounts will be returned with _receiver_ Output
 
-#### 3.3.1.3 Redeemer
+#### 3.3.2.3 Redeemer
 
 There're 2 order actions:
 
-- **ApplyOrder**: the redeemer will allow spending Order UTxO in Batching transaction
+- **ApplyOrder**
+- **CancelOrder**
+
+#### 3.3.2.4 Validation
+
+- **ApplyOrder**: the redeemer will allow spending Order UTxO in Batching transaction 
+  - validate that an Order can be spent if there's a single Pool UTxO that matches with _pool_validator_hash_ parameter in the transaction inputs. The rest of validation is delegated to pool script
 - **CancelOrder**: the redeemer will allow _sender_ to spend Order UTxO to get back locked funds.
+  - validate that the transaction has _sender_'s signature or _sender_ script UTxO in the Transaction Inputs
 
-#### 3.3.1.4 Validation
-
-- **ApplyOrder**: validate that an Order can be spent if there's a single Pool UTxO that matches with _pool_validator_hash_ parameter in the transaction inputs. The rest of validation is delegated to pool script
-- **CancelOrder**: validate that the transaction has _sender_'s signature
-
-### 3.3.2 Liquidity Minting Policy
+### 3.3.3 Liquidity Minting Policy
 
 Liquidity Minting Policy is responsible for making sure only Pool Validator can mint LP, other validations related how many LP will be minted will be forwarded to Pool Validator
 
-#### 3.3.2.1 Parameter
+#### 3.3.3.1 Parameter
 
 - _nft_asset_: is known as Pool NFT asset which identifies Pool and make sure that Liquidity Pool is unique
 
-#### 3.3.2.2 Redeemer
+#### 3.3.3.2 Redeemer
 
 None
 
-#### 3.3.2.3 Validation
+#### 3.3.3.3 Validation
 
 - Validate that the transaction must have a Pool UTxO holding 1 NFT Asset in both the inputs and outputs
 - Validate that transaction must only mint LP asset and LP Asset must have the same TokenName with NFT Asset
 
-#### 3.3.3 Pool Validator
+#### 3.3.4 Pool Validator
 
 Pool validator is the most important part in the system. It's responsible for guaranteeing that Orders must be processed in the correct way and Liquidity Providers' funds cannot be stolen in any way.
 
-#### 3.3.3.1 Parameter
+#### 3.3.4.1 Parameter
 
 - _nft_asset_: a.k.a Pool NFT asset which identifies Pool and make sure that the Liquidity Pool is unique
 - _lp_asset_: is the "share" asset which is created by the Liquidity Minting Policy
@@ -121,13 +149,14 @@ Pool validator is the most important part in the system. It's responsible for gu
 - _admin_fee_: the **numerator** of the % of the fee that goes to Admin
 - _fee_denominator_: is the **denominator** of _fee_ and _admin_fee_, which help calculation more accurate
 
-#### 3.3.3.3 Datum
+#### 3.3.4.3 Datum
 
 - _balances_: is the balances of Pool's assets, has the same index with _assets_ in Pool's parameters
 - _total_liquidity_: is the Total Liquidity (which is equals with total amount of minted LP Token)
 - _amp_: is known as Amplification Coefficient, is the key metric in whole Stableswap system.
+- _order_hash_: Validator Hash of Order Contract
 
-#### 3.3.3.3 Redeemer
+#### 3.3.4.3 Redeemer
 
 There're 3 pool actions:
 
@@ -135,7 +164,7 @@ There're 3 pool actions:
 - **WithdrawAdminFee**: can only be trigged by Admin, allow Admin to withdraw earned Admin Fee
 - **UpdateAmpOrStakeCredential**: can only be trigged by Admin, allow Admin to update Amplification Coefficient configuration or update Pool's Stake Credential
 
-#### 3.3.3.4 Validation
+#### 3.3.4.4 Validation
 
 - **ApplyPool**:
   - Having only one Pool Input and Output in the transaction. The Pool Input and Output must have the same Address (both payment and stake credential part)
@@ -188,6 +217,7 @@ Pool UTxO includes:
   - balances: an array having N elements, each element has _0_ value
   - total_liquidity: 0
   - amp: initial Amplication Coefficient (decided by Minswap team)
+  - _order_hash_: is the Validator Hash of `Order Contract`
 
 ![CreatePool](pics/create-pool.png)
 
@@ -236,7 +266,7 @@ Besides common information such as _sender_, _receiver_, etc, each order type re
 #### 3.4.3 Cancel Order
 
 Cancel Order transaction will spend Order UTxO and take users' fund back to their wallet.
-This transaction requires the signature of _sender_
+This transaction requires the _sender_'s signature or _sender_ script UTxO in the Transaction Inputs
 
 ![CancelOrder](pics/cancel-order.png)
 

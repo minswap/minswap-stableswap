@@ -60,7 +60,13 @@ fn do_get_y_converging(
 
 pub fn get_y(i: Int, j: Int, x: Int, xp: List<Int>, amp: Int) -> Int {
   let n = list.length(xp)
-  expect i != j && i >= 0 && j >= 0 && i < n && j < n
+  expect and {
+      i != j,
+      i >= 0,
+      j >= 0,
+      i < n,
+      j < n,
+    }
   let d = get_d(xp, amp)
   let ann = amp * n
   let (_, s, init_c) =
