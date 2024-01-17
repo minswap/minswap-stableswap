@@ -1,0 +1,28 @@
+{
+  "name": "stableswap-aiken",
+  "version": "1.0.0",
+  "description": "Write validators in the `validators` folder, and supporting functions in the `lib` folder using `.ak` as a file extension.",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "build": "ts-node build-plutus.ts",
+    "exec": "ts-node --esm --experimental-specifier-resolution=node"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@types/jest": "^29.5.3",
+    "@types/node": "^18.15.11",
+    "jest": "^29.6.2",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.0.3"
+  },
+  "dependencies": {
+    "lucid-cardano": "^0.9.8"
+  },
+  "type": "module"
+}

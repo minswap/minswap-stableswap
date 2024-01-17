@@ -1,0 +1,21 @@
+{
+    "compilerOptions": {
+      "target": "ES2022",
+      "module": "ES2022",
+      "moduleResolution": "node",
+      "lib": ["ES2022"],
+      "outDir": "build",
+      "skipLibCheck": true,
+      "esModuleInterop": true,
+      "strict": true,
+      "resolveJsonModule": true,
+      "forceConsistentCasingInFileNames": true,
+      "noImplicitOverride": true,
+      "noUnusedParameters": true,
+      "noImplicitReturns": true,
+      "noImplicitThis": true,
+      "noFallthroughCasesInSwitch": true
+    },
+    "exclude": ["build"]
+  }
+  

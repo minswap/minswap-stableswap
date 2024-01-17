@@ -274,7 +274,7 @@ This transaction requires the _sender_'s signature or _sender_ script UTxO in th
 
 Batching transaction is the most complex structure.
 
-It requires a Pool UTxO, Batcher UTxOs (must include Batcher License Token) and Order UTxOs which are applying to the Pool UTxO
+It requires a Pool UTxO, Batcher UTxOs (must include Batcher License Token), Order UTxOs which are applying to the Pool UTxO and Order Batching Withdrawal Script
 
 Batcher will:
 
@@ -304,7 +304,7 @@ Batcher will:
       - Asset Out + its amount (must be greater than _minimum_asset_out_)
 - Take _Batcher Fee_ of all Orders, a part of them will be used for Transaction Fee, the remaining amount will be kept on Batcher wallet
 
-![Batching](pics/batching.png)
+![Batching](pics/batching-orders.png)
 
 #### 3.4.5 Withdraw Admin Fee
 
@@ -320,4 +320,4 @@ This transaction can either update Amplification Coefficient or update Pool's St
 
 It will spend Pool UTxO and modify _Amp_ configuration in Pool's Datum and take Datum & Value inside Pool UTxO to new UTxO (which has the same _payment_credential_ and new _stake_credential_ part)
 
-![UpdateAmpOrStakeCredential](pics/update-amp-or-stake-credential.png)
+![UpdateAmpOrStakeCredential](pics/update-stake.png)
