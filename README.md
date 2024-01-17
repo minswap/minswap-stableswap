@@ -1,17 +1,25 @@
-# Minswap Stableswap Contract
+# 😻 Minswap Stableswap Contract
 
 ## Structure
-- There are 4 mains contract under `validators` folder and utility functions under `lib/stableswap` folder
+- Main contracts:
+  - Order & Order Batching Validators `/validator/order_validator.ak`
+  - Pool Validator `/validator/pool_validator.ak`
+  - LP Minting Policy `/validator/lp_minting_policy.ak`
+- Library: under `/lib/stableswap` package
 
 ## Building
 
-- Make sure you have already installed `npm` and `aiken`
+### Prerequisites
+- Install npm: https://docs.npmjs.com/downloading-and-installing-node-js-and-npm
+- Install Aiken v1.0.21-alpha: https://aiken-lang.org/installation-instructions
+- Run `aiken build` to double check scripts bytecode in `plutus.json` file 
 - Run `npm install` to install necessary dependencies 
-- Run `npx ts-node --esm build-plutus.ts` to build scripts. The result is `stableswap-script.json` file
+- Run `npx ts-node --esm build-plutus.ts` to build scripts with initial parameters. The result is `stableswap-script.json` file
 
 ## Testing
 
 - Run `aiken check` to run all unit tests of the contract
+- Minswap Testnet Preprod website: https://testnet-preprod.minswap.org/
 
 ## References
 
