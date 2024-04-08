@@ -59,3 +59,8 @@ The Pool NFT is a key component in Stableswap, uniquely identifying each Pool an
 1. [Specification](/stableswap-docs/stableswap-spec.md)
 2. [Stableswap Formula](/stableswap-docs/formula.md)
 3. [Audit Report](/audit-report/TxPipe-audit-report.pdf)
+
+## Deployed contract
+
+- [DJED-iUSD Pool](./deployed-contract/djed-iusd/deployed.md)
+- [USDC-iUSD Pool](./deployed-contract/usdc-djed/deployed.md)
