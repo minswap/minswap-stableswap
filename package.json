@@ -9,7 +9,8 @@
   "scripts": {
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "build": "ts-node build-plutus.ts",
-    "exec": "ts-node --esm --experimental-specifier-resolution=node"
+    "exec": "ts-node --esm --experimental-specifier-resolution=node",
+    "format": "prettier --write **/*.ts && eslint src --fix --ext .ts"
   },
   "keywords": [],
   "author": "",

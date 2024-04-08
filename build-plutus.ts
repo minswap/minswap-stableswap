@@ -4,7 +4,8 @@ import {
     SpendingValidator,
     fromHex,
     C,
-    WithdrawalValidator
+    WithdrawalValidator,
+    fromText
 } from "lucid-cardano";
 import * as fs from "fs";
 
@@ -34,6 +35,17 @@ const TESTNET_POOL_NFT_SYMBOL = "06fe1ba957728130154154d5e5b25a7b533ebe6c4516356
 const TESTNET_LICENSE_SYMBOL = "defbf038da8ec085f9a304f13946f34522c2f7866bac9def8391685b"
 const TESTNET_ADMIN_ASSET: Asset = {
     policyId: "defbf038da8ec085f9a304f13946f34522c2f7866bac9def8391685b",
+    tokenName: "41444d494e"
+}
+const TESTNET_STAKE_CREDENTIAL = C.StakeCredential.from_keyhash(C.Ed25519KeyHash.from_hex("83ec96719dc0591034b78e472d6f477446261fec4bc517fa4d047f02"))
+
+const MAINNET_MAXIMUM_DEADLINE_RANGE = 7776000000n; // 90 days
+const MAINNET_FEE = 1000000n;
+const MAINNET_ADMIN_FEE = 5000000000n;
+const MAINNET_FEE_DENOMINATOR = 10000000000n;
+const MAINNET_BATCHER_LICENSE_SYMBOL = "53299e1f266eec1030b07866b3c4c4824c8bb4097ccd3d5765204d64";
+const MAINNET_ADMIN_ASSET: Asset = {
+    policyId: "ef40bdb216a026ef0a72593df1729d368d124e52af655dd452d4631d",
     tokenName: "41444d494e"
 }
 
@@ -140,7 +152,7 @@ function buildStakeCredPlutusData(scriptHash: string): C.PlutusData {
             C.BigNum.from_str("0"),
             s2
         )
-    ) 
+    )
 
     return c2
 }
@@ -222,12 +234,6 @@ export async function buildScripts(
         script: poolScript
     })
 
-    const poolAddr = C.BaseAddress.new(
-        network === NetworkID.TESTNET ? 0 : 1,
-        C.StakeCredential.from_scripthash(C.ScriptHash.from_hex(poolHash)),
-        C.StakeCredential.from_keyhash(C.Ed25519KeyHash.from_hex("83ec96719dc0591034b78e472d6f477446261fec4bc517fa4d047f02"))
-    ).to_address().to_bech32(undefined)
-
     const poolHashPlutusData = C.PlutusData.new_bytes(bytesFromHex(poolHash))
 
     const orderBatchingScript = applyParamsToScript(poolHashPlutusData, validators.orderBatchingScript.script)
@@ -248,11 +254,29 @@ export async function buildScripts(
         script: orderScript
     })
 
-    const orderAddr = C.BaseAddress.new(
-        network === NetworkID.TESTNET ? 0 : 1,
-        C.StakeCredential.from_scripthash(C.ScriptHash.from_hex(orderHash)),
-        C.StakeCredential.from_keyhash(C.Ed25519KeyHash.from_hex("83ec96719dc0591034b78e472d6f477446261fec4bc517fa4d047f02"))
-    ).to_address().to_bech32(undefined)
+    let poolAddr: string
+    let orderAddr: string
+    if (poolConfig.stakeCredential) {
+        poolAddr = C.BaseAddress.new(
+            network === NetworkID.TESTNET ? 0 : 1,
+            C.StakeCredential.from_scripthash(C.ScriptHash.from_hex(poolHash)),
+            poolConfig.stakeCredential
+        ).to_address().to_bech32(undefined)
+        orderAddr = C.BaseAddress.new(
+            network === NetworkID.TESTNET ? 0 : 1,
+            C.StakeCredential.from_scripthash(C.ScriptHash.from_hex(orderHash)),
+            poolConfig.stakeCredential
+        ).to_address().to_bech32(undefined)
+    } else {
+        poolAddr = C.EnterpriseAddress.new(
+            network === NetworkID.TESTNET ? 0 : 1,
+            C.StakeCredential.from_scripthash(C.ScriptHash.from_hex(poolHash)),
+        ).to_address().to_bech32(undefined)
+        orderAddr = C.EnterpriseAddress.new(
+            network === NetworkID.TESTNET ? 0 : 1,
+            C.StakeCredential.from_scripthash(C.ScriptHash.from_hex(orderHash)),
+        ).to_address().to_bech32(undefined)
+    }
 
     const res: BuildScriptResponse = {
         key: poolConfig.dirName,
@@ -287,10 +311,64 @@ type PoolConfig = {
     licenseSymbol: string;
     adminAsset: Asset;
     maximumDeadlineRange: bigint;
+    stakeCredential?: C.StakeCredential
 }
 
 const POOL_CONFIGS: Record<NetworkID, PoolConfig[]> = {
-    mainnet: [],
+    mainnet: [
+        {
+            dirName: "djed-iusd",
+            nftAsset: {
+                policyId: "5d4b6afd3344adcf37ccef5558bb87f522874578c32f17160512e398",
+                tokenName: fromText("DJED-iUSD-SLP")
+            },
+            assets: [
+                // DJED
+                {
+                    policyId: "8db269c3ec630e06ae29f74bc39edd1f87c819f1056206e879a1cd61",
+                    tokenName: "446a65644d6963726f555344"
+                },
+                // iUSD
+                {
+                    policyId: "f66d78b4a3cb3d37afa0ec36461e51ecbde00f26c8f0a68f94b69880",
+                    tokenName: "69555344"
+                }
+            ],
+            multiples: [1n, 1n],
+            fee: MAINNET_FEE,
+            adminFee: MAINNET_ADMIN_FEE,
+            feeDenominator: MAINNET_FEE_DENOMINATOR,
+            licenseSymbol: MAINNET_BATCHER_LICENSE_SYMBOL,
+            adminAsset: MAINNET_ADMIN_ASSET,
+            maximumDeadlineRange: MAINNET_MAXIMUM_DEADLINE_RANGE,
+        },
+        {
+            dirName: "usdc-djed",
+            nftAsset: {
+                policyId: "d97fa91daaf63559a253970365fb219dc4364c028e5fe0606cdbfff9",
+                tokenName: fromText("USDC-DJED-SLP")
+            },
+            assets: [
+                // USDC
+                {
+                    policyId: "25c5de5f5b286073c593edfd77b48abc7a48e5a4f3d4cd9d428ff935",
+                    tokenName: "55534443"
+                },
+                // DJED
+                {
+                    policyId: "8db269c3ec630e06ae29f74bc39edd1f87c819f1056206e879a1cd61",
+                    tokenName: "446a65644d6963726f555344"
+                }
+            ],
+            multiples: [1n, 100n],
+            fee: MAINNET_FEE,
+            adminFee: MAINNET_ADMIN_FEE,
+            feeDenominator: MAINNET_FEE_DENOMINATOR,
+            licenseSymbol: MAINNET_BATCHER_LICENSE_SYMBOL,
+            adminAsset: MAINNET_ADMIN_ASSET,
+            maximumDeadlineRange: MAINNET_MAXIMUM_DEADLINE_RANGE,
+        }
+    ],
     testnet: [
         {
             dirName: "djed-iusd",
@@ -312,7 +390,8 @@ const POOL_CONFIGS: Record<NetworkID, PoolConfig[]> = {
             feeDenominator: TESTNET_FEE_DENOMINATOR,
             licenseSymbol: TESTNET_LICENSE_SYMBOL,
             adminAsset: TESTNET_ADMIN_ASSET,
-            maximumDeadlineRange: TESTNET_MAXIMUM_DEADLINE_RANGE
+            maximumDeadlineRange: TESTNET_MAXIMUM_DEADLINE_RANGE,
+            stakeCredential: TESTNET_STAKE_CREDENTIAL
         },
         {
             dirName: "usdc-usdt",
@@ -334,7 +413,8 @@ const POOL_CONFIGS: Record<NetworkID, PoolConfig[]> = {
             feeDenominator: TESTNET_FEE_DENOMINATOR,
             licenseSymbol: TESTNET_LICENSE_SYMBOL,
             adminAsset: TESTNET_ADMIN_ASSET,
-            maximumDeadlineRange: TESTNET_MAXIMUM_DEADLINE_RANGE
+            maximumDeadlineRange: TESTNET_MAXIMUM_DEADLINE_RANGE,
+            stakeCredential: TESTNET_STAKE_CREDENTIAL
         },
         {
             dirName: "djed-iusd-dai",
@@ -360,7 +440,8 @@ const POOL_CONFIGS: Record<NetworkID, PoolConfig[]> = {
             feeDenominator: TESTNET_FEE_DENOMINATOR,
             licenseSymbol: TESTNET_LICENSE_SYMBOL,
             adminAsset: TESTNET_ADMIN_ASSET,
-            maximumDeadlineRange: TESTNET_MAXIMUM_DEADLINE_RANGE
+            maximumDeadlineRange: TESTNET_MAXIMUM_DEADLINE_RANGE,
+            stakeCredential: TESTNET_STAKE_CREDENTIAL
         }
     ],
 }
