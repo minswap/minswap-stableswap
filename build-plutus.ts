@@ -393,6 +393,32 @@ const POOL_CONFIGS: Record<NetworkID, PoolConfig[]> = {
             licenseSymbol: MAINNET_BATCHER_LICENSE_SYMBOL,
             adminAsset: MAINNET_ADMIN_ASSET,
             maximumDeadlineRange: MAINNET_MAXIMUM_DEADLINE_RANGE,
+        },
+        {
+            dirName: "djed-usdm",
+            nftAsset: {
+                policyId: "07b0869ed7488657e24ac9b27b3f0fb4f76757f444197b2a38a15c3c",
+                tokenName: fromText("DJED-USDM-SLP")
+            },
+            assets: [
+                // DJED
+                {
+                    policyId: "8db269c3ec630e06ae29f74bc39edd1f87c819f1056206e879a1cd61",
+                    tokenName: "446a65644d6963726f555344"
+                },
+                // USDM
+                {
+                    policyId: "c48cbb3d5e57ed56e276bc45f99ab39abe94e6cd7ac39fb402da47ad",
+                    tokenName: "0014df105553444d"
+                }
+            ],
+            multiples: [1n, 1n],
+            fee: MAINNET_FEE,
+            adminFee: MAINNET_ADMIN_FEE,
+            feeDenominator: MAINNET_FEE_DENOMINATOR,
+            licenseSymbol: MAINNET_BATCHER_LICENSE_SYMBOL,
+            adminAsset: MAINNET_ADMIN_ASSET,
+            maximumDeadlineRange: MAINNET_MAXIMUM_DEADLINE_RANGE,
         }
     ],
     testnet: [
